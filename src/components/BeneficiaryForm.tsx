@@ -235,6 +235,8 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
                   placeholder="Stellar address (G...) or federated address (name*domain.com)"
                   value={beneficiary.address}
                   onChange={(event) => updateRow(index, { address: event.target.value })}
+                  aria-invalid={addressErrors[index] ? 'true' : undefined}
+                  aria-describedby={addressErrors[index] ? `beneficiary-address-error-${index}` : undefined}
                   className={`w-full rounded-lg border ${
                     addressErrors[index] ? 'border-red-400' : 'border-white/10'
                   } bg-white/5 px-3 py-2 font-mono text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none`}
@@ -297,7 +299,7 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
               </div>
             )}
             {addressErrors[index] && (
-              <p className="text-xs text-red-400">
+              <p id={`beneficiary-address-error-${index}`} role="alert" className="text-xs text-red-400">
                 {addressErrors[index]}
               </p>
             )}
