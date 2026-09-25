@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Beneficiary } from '@sorowill/sdk';
 
@@ -90,6 +90,13 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
     return newIds;
   }, [value.length]);
 
+  // Latest `value`, so an async resolution applies to the rows as they are
+  // when it completes rather than to the snapshot taken when it started.
+  const latestValue = useRef(value);
+  useEffect(() => {
+    latestValue.current = value;
+  }, [value]);
+
   const [resolvedAddresses, setResolvedAddresses] = useState<Map<string, string>>(new Map());
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [resolutionError, setResolutionError] = useState<Map<string, string>>(new Map());
@@ -134,7 +141,9 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
     setResolvingId(id);
     try {
       const resolved = await resolveFederatedAddress(address);
-      onChange(value.map((row, rowIndex) => (rowIndex === index ? { ...row, address: resolved } : row)));
+      onChange(
+        latestValue.current.map((row, rowIndex) => (rowIndex === index ? { ...row, address: resolved } : row)),
+      );
       setResolvedAddresses((prev) => new Map(prev).set(id, resolved));
       setResolutionError((prev) => {
         const next = new Map(prev);
