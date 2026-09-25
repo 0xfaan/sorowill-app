@@ -164,6 +164,29 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
   }
 
   function removeRow(index: number) {
+    const removedId = stableBeneficiaryIds.get(index);
+    // Shift ids down past the removed row so every remaining row keeps its own
+    // id, and its resolution state, instead of inheriting the deleted row's.
+    setBeneficiaryIds((prev) => {
+      const next = new Map<number, string>();
+      prev.forEach((id, i) => {
+        if (i < index) next.set(i, id);
+        else if (i > index) next.set(i - 1, id);
+      });
+      return next;
+    });
+    if (removedId) {
+      setResolvedAddresses((prev) => {
+        const next = new Map(prev);
+        next.delete(removedId);
+        return next;
+      });
+      setResolutionError((prev) => {
+        const next = new Map(prev);
+        next.delete(removedId);
+        return next;
+      });
+    }
     onChange(value.filter((_, i) => i !== index));
   }
 
