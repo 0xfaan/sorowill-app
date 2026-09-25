@@ -45,6 +45,7 @@ export function NetworkSwitcher() {
   return (
     <div className="relative inline-flex items-center">
       <select
+        aria-label="Stellar network"
         value={network}
         onChange={handleNetworkChange}
         className={`rounded-full border px-3 py-1 text-xs font-semibold bg-will-dark cursor-pointer focus:outline-none transition-all duration-200 ${
