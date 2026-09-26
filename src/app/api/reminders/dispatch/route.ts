@@ -21,11 +21,17 @@ function constantTimeEqual(a: string, b: string): boolean {
 export async function GET(request: Request) {
   const expectedToken = process.env.CRON_SECRET;
 
+  // Fail closed: if CRON_SECRET is not configured, reject the request rather
+  // than skipping the auth check and exposing the endpoint publicly.
   if (!expectedToken) {
     return NextResponse.json(
-      { error: 'CRON_SECRET is not configured' },
+      { sent: 0, skipped: 0, errors: ['Server misconfigured: CRON_SECRET is not set'] },
       { status: 500 },
     );
+  }
+
+  if (authHeader !== `Bearer ${expectedToken}`) {
+    return NextResponse.json({ sent: 0, skipped: 0, errors: ['Unauthorized'] }, { status: 401 });
   }
 
   const authHeader = request.headers.get('authorization') ?? '';

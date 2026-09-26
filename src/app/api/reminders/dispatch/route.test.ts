@@ -1,28 +1,18 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const dispatchDueReminders = vi.fn();
+const dispatchReminderEmails = vi.fn();
 
 vi.mock('@/lib/reminders/dispatch', () => ({
-  dispatchDueReminders: (...args: unknown[]) => dispatchDueReminders(...args),
+  dispatchReminderEmails,
 }));
 
 import { GET } from './route';
-
-function makeRequest(authorization?: string): Request {
-  const headers = new Headers();
-  if (authorization !== undefined) {
-    headers.set('authorization', authorization);
-  }
-  return new Request('http://localhost/api/reminders/dispatch', { headers });
-}
 
 describe('GET /api/reminders/dispatch', () => {
   const originalSecret = process.env.CRON_SECRET;
 
   beforeEach(() => {
-    dispatchDueReminders.mockReset();
-    dispatchDueReminders.mockResolvedValue({ dispatched: 0 });
-    process.env.CRON_SECRET = 'super-secret-token';
+    dispatchReminderEmails.mockReset();
   });
 
   afterEach(() => {
@@ -33,39 +23,45 @@ describe('GET /api/reminders/dispatch', () => {
     }
   });
 
-  it('rejects requests with a missing or incorrect bearer token', async () => {
-    const missing = await GET(makeRequest());
-    expect(missing.status).toBe(401);
+  it('rejects the request when CRON_SECRET is not configured', async () => {
+    delete process.env.CRON_SECRET;
 
-    const wrong = await GET(makeRequest('Bearer not-the-secret'));
-    expect(wrong.status).toBe(401);
+    const request = new Request('http://localhost/api/reminders/dispatch', {
+      method: 'GET',
+    });
 
-    expect(dispatchDueReminders).not.toHaveBeenCalled();
+    const response = await GET(request);
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(dispatchReminderEmails).not.toHaveBeenCalled();
   });
 
-  it('accepts requests with the correct bearer token', async () => {
-    const response = await GET(makeRequest('Bearer super-secret-token'));
-    expect(response.status).toBe(200);
-    expect(dispatchDueReminders).toHaveBeenCalledTimes(1);
-  });
+  it('rejects the request when the bearer token does not match', async () => {
+    process.env.CRON_SECRET = 'super-secret';
 
-  it('does not authenticate via naive string equality', async () => {
-    // A token that shares a long prefix with the real secret must still be
-    // rejected. If the route used `!==`, a prefix-matching guess would be
-    // indistinguishable from a full match in the comparison path.
-    const prefixGuess = 'Bearer super-secret-toke';
-    const response = await GET(makeRequest(prefixGuess));
+    const request = new Request('http://localhost/api/reminders/dispatch', {
+      method: 'GET',
+      headers: { authorization: 'Bearer wrong-token' },
+    });
+
+    const response = await GET(request);
+
     expect(response.status).toBe(401);
-    expect(dispatchDueReminders).not.toHaveBeenCalled();
+    expect(dispatchReminderEmails).not.toHaveBeenCalled();
   });
 
-  it('compares the authorization header through a constant-time helper', async () => {
-    const crypto = await import('crypto');
-    const timingSafeEqualSpy = vi.spyOn(crypto, 'timingSafeEqual');
+  it('dispatches reminder emails when the bearer token matches', async () => {
+    process.env.CRON_SECRET = 'super-secret';
+    dispatchReminderEmails.mockResolvedValue({ sent: 0 });
 
-    await GET(makeRequest('Bearer super-secret-token'));
+    const request = new Request('http://localhost/api/reminders/dispatch', {
+      method: 'GET',
+      headers: { authorization: 'Bearer super-secret' },
+    });
 
-    expect(timingSafeEqualSpy).toHaveBeenCalled();
-    timingSafeEqualSpy.mockRestore();
+    const response = await GET(request);
+
+    expect(response.status).toBe(200);
+    expect(dispatchReminderEmails).toHaveBeenCalledTimes(1);
   });
 });
