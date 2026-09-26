@@ -46,6 +46,18 @@ export function classifyError(err: unknown): ErrorInfo {
   return { type: 'generic', message };
 }
 
+/**
+ * Returns a channel for cross-tab wallet sync, or `null` where BroadcastChannel
+ * is unavailable (SSR, Safari < 15.4, some webviews). Callers then fall back
+ * to single-tab behaviour instead of throwing.
+ */
+function openWalletChannel(): BroadcastChannel | null {
+  if (typeof BroadcastChannel === 'undefined') {
+    return null;
+  }
+  return new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+}
+
 function isSessionCleared(): boolean {
   if (typeof window === 'undefined') {
     return false;
@@ -90,9 +102,8 @@ export function WalletConnect() {
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+    const channel = openWalletChannel();
+    if (!channel) return;
 
     const handleMessage = (event: MessageEvent) => {
       const { type, publicKey: incomingKey } = event.data;
@@ -121,8 +132,8 @@ export function WalletConnect() {
       const connection = await safeConnectWallet();
       setPublicKey(connection.publicKey);
 
-      if (typeof window !== 'undefined') {
-        const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+      const channel = openWalletChannel();
+      if (channel) {
         channel.postMessage({
           type: 'wallet_connected',
           publicKey: connection.publicKey,
@@ -141,8 +152,8 @@ export function WalletConnect() {
     setPublicKey(null);
     setError(null);
 
-    if (typeof window !== 'undefined') {
-      const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+    const channel = openWalletChannel();
+    if (channel) {
       channel.postMessage({
         type: 'wallet_disconnected',
       });
