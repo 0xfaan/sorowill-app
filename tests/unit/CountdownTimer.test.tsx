@@ -82,4 +82,46 @@ describe('CountdownTimer', () => {
     const span = screen.getByText(/overdue/i);
     expect(span.className).toContain('text-red-400');
   });
+
+  it('stops interval once deadline has passed (#195)', () => {
+    vi.useFakeTimers();
+    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
+    const future = new Date(Date.now() + 2000);
+    render(<CountdownTimer deadline={future} />);
+
+    // Advance timer past 0
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(screen.getByText(/overdue/i)).toBeInTheDocument();
+    expect(clearIntervalSpy).toHaveBeenCalled();
+
+    clearIntervalSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('pauses countdown when document is hidden (#73)', () => {
+    vi.useFakeTimers();
+    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
+    const future = new Date(Date.now() + 10_000);
+    render(<CountdownTimer deadline={future} />);
+
+    // Mock document.hidden = true and fire visibilitychange
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    expect(clearIntervalSpy).toHaveBeenCalled();
+
+    // Reset document.hidden
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    clearIntervalSpy.mockRestore();
+    vi.useRealTimers();
+  });
 });

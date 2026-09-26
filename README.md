@@ -59,6 +59,18 @@ npm run dev
 | `CRON_SECRET` | Bearer token for authenticating automated reminder dispatch requests from GitHub Actions (required if using the automated GitHub Actions trigger; see [Reminder delivery](#reminder-delivery)) |
 | `NEXT_PUBLIC_APP_URL` | Optional public base URL used to build the unsubscribe link in reminder emails (defaults to `VERCEL_URL` or `http://localhost:3000`) |
 
+## Design Tokens
+
+The app uses custom theme tokens defined in `tailwind.config.ts`:
+
+| Token | Value / Hex | Usage |
+|---|---|---|
+| `will-purple` | `#4F46E5` | Primary action color for buttons, interactive accents, active states, progress indicators |
+| `will-dark` | `#1E1B4B` | Main page and container background brand base |
+| `will-light` | `#EEF2FF` | Primary text and heading color across all views |
+
+Opacity utilities such as `text-will-light/60` provide subdued secondary text, and `border-white/10` / `border-white/20` form consistent card borders and dividers.
+
 ## Pages
 
 | Route | Description |
