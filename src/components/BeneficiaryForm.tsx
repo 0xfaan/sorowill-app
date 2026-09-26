@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Beneficiary } from '@sorowill/sdk';
 
@@ -90,6 +90,13 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
     return newIds;
   }, [value.length]);
 
+  // Latest `value`, so an async resolution applies to the rows as they are
+  // when it completes rather than to the snapshot taken when it started.
+  const latestValue = useRef(value);
+  useEffect(() => {
+    latestValue.current = value;
+  }, [value]);
+
   const [resolvedAddresses, setResolvedAddresses] = useState<Map<string, string>>(new Map());
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [resolutionError, setResolutionError] = useState<Map<string, string>>(new Map());
@@ -134,7 +141,9 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
     setResolvingId(id);
     try {
       const resolved = await resolveFederatedAddress(address);
-      onChange(value.map((row, rowIndex) => (rowIndex === index ? { ...row, address: resolved } : row)));
+      onChange(
+        latestValue.current.map((row, rowIndex) => (rowIndex === index ? { ...row, address: resolved } : row)),
+      );
       setResolvedAddresses((prev) => new Map(prev).set(id, resolved));
       setResolutionError((prev) => {
         const next = new Map(prev);
@@ -164,6 +173,29 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
   }
 
   function removeRow(index: number) {
+    const removedId = stableBeneficiaryIds.get(index);
+    // Shift ids down past the removed row so every remaining row keeps its own
+    // id, and its resolution state, instead of inheriting the deleted row's.
+    setBeneficiaryIds((prev) => {
+      const next = new Map<number, string>();
+      prev.forEach((id, i) => {
+        if (i < index) next.set(i, id);
+        else if (i > index) next.set(i - 1, id);
+      });
+      return next;
+    });
+    if (removedId) {
+      setResolvedAddresses((prev) => {
+        const next = new Map(prev);
+        next.delete(removedId);
+        return next;
+      });
+      setResolutionError((prev) => {
+        const next = new Map(prev);
+        next.delete(removedId);
+        return next;
+      });
+    }
     onChange(value.filter((_, i) => i !== index));
   }
 
@@ -203,6 +235,8 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
                   placeholder="Stellar address (G...) or federated address (name*domain.com)"
                   value={beneficiary.address}
                   onChange={(event) => updateRow(index, { address: event.target.value })}
+                  aria-invalid={addressErrors[index] ? 'true' : undefined}
+                  aria-describedby={addressErrors[index] ? `beneficiary-address-error-${index}` : undefined}
                   className={`w-full rounded-lg border ${
                     addressErrors[index] ? 'border-red-400' : 'border-white/10'
                   } bg-white/5 px-3 py-2 font-mono text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none`}
@@ -236,7 +270,9 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
                         return;
                       }
                       const val = Number(raw);
-                      const clamped = isNaN(val) ? 0 : Math.max(0, Math.min(100, Math.floor(val)));
+                      // Clamp the range but keep fractions, so a non-integer surfaces the
+                      // "whole numbers" validation message instead of being silently truncated.
+                      const clamped = isNaN(val) ? 0 : Math.max(0, Math.min(100, val));
                       updateRow(index, { percentage: clamped });
                     }}
                     className="w-20 rounded-lg border border-white/10 bg-white/5 px-2 py-2 text-right text-sm text-will-light focus:border-will-purple focus:outline-none"
@@ -265,7 +301,7 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
               </div>
             )}
             {addressErrors[index] && (
-              <p className="text-xs text-red-400">
+              <p id={`beneficiary-address-error-${index}`} role="alert" className="text-xs text-red-400">
                 {addressErrors[index]}
               </p>
             )}
