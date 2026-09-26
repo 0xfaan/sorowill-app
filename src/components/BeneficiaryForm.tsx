@@ -236,7 +236,9 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
                         return;
                       }
                       const val = Number(raw);
-                      const clamped = isNaN(val) ? 0 : Math.max(0, Math.min(100, Math.floor(val)));
+                      // Clamp the range but keep fractions, so a non-integer surfaces the
+                      // "whole numbers" validation message instead of being silently truncated.
+                      const clamped = isNaN(val) ? 0 : Math.max(0, Math.min(100, val));
                       updateRow(index, { percentage: clamped });
                     }}
                     className="w-20 rounded-lg border border-white/10 bg-white/5 px-2 py-2 text-right text-sm text-will-light focus:border-will-purple focus:outline-none"

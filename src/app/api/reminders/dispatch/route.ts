@@ -1,31 +1,48 @@
 import { timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
+import { timingSafeEqual } from 'crypto';
+import { dispatchDueReminders } from '@/lib/reminders/dispatch';
 
-import { dispatchReminderEmails } from '@/lib/reminders';
+export const dynamic = 'force-dynamic';
 
 /**
- * Constant-time comparison of the Authorization header against the expected
- * bearer token, so response timing doesn't reveal how much of CRON_SECRET
- * matched (#281). Fails closed when CRON_SECRET is unset (#177).
+ * Constant-time comparison of two strings.
+ *
+ * V8's `===`/`!==` short-circuits on the first mismatched byte, which leaks
+ * how many leading characters of a guessed secret are correct. We hash both
+ * sides to a fixed-length digest first so that inputs of differing lengths
+ * can still be compared with `crypto.timingSafeEqual` without throwing.
  */
-function isAuthorized(authHeader: string | null, expectedToken: string | undefined): boolean {
-  if (!expectedToken || !authHeader) return false;
-  const actual = Buffer.from(authHeader);
-  const expected = Buffer.from(`Bearer ${expectedToken}`);
-  if (actual.length !== expected.length) return false;
-  return timingSafeEqual(actual, expected);
+function constantTimeEqual(a: string, b: string): boolean {
+  const aHash = createHash('sha256').update(a).digest();
+  const bHash = createHash('sha256').update(b).digest();
+  return timingSafeEqual(aHash, bHash);
 }
 
-export async function POST(request: Request) {
-  if (!isAuthorized(request.headers.get('authorization'), process.env.CRON_SECRET)) {
+export async function GET(request: Request) {
+  const expectedToken = process.env.CRON_SECRET;
+
+  // Fail closed: if CRON_SECRET is not configured, reject the request rather
+  // than skipping the auth check and exposing the endpoint publicly.
+  if (!expectedToken) {
+    return NextResponse.json(
+      { sent: 0, skipped: 0, errors: ['Server misconfigured: CRON_SECRET is not set'] },
+      { status: 500 },
+    );
+  }
+
+  if (authHeader !== `Bearer ${expectedToken}`) {
     return NextResponse.json({ sent: 0, skipped: 0, errors: ['Unauthorized'] }, { status: 401 });
   }
 
-  try {
-    const result = await dispatchReminderEmails();
-    return NextResponse.json(result, { status: 200 });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Could not dispatch reminders';
-    return NextResponse.json({ sent: 0, skipped: 0, errors: [message] }, { status: 500 });
+  const authHeader = request.headers.get('authorization') ?? '';
+  const expectedHeader = `Bearer ${expectedToken}`;
+
+  if (!constantTimeEqual(authHeader, expectedHeader)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  const result = await dispatchDueReminders();
+
+  return NextResponse.json(result);
 }
