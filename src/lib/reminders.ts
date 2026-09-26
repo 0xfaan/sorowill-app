@@ -379,12 +379,17 @@ export async function dispatchReminderEmails(): Promise<ReminderDispatchResult> 
           continue;
         }
 
-        await sendReminderEmail({
+        const emailSent = await sendReminderEmail({
           to: subscription.email,
           will,
           deadline,
           reminderKind,
         });
+
+        if (!emailSent) {
+          sentCount.skipped += 1;
+          continue;
+        }
 
         if (reminderKind === 'imminent') {
           historyEntry.imminentSentAt = new Date().toISOString();
@@ -414,13 +419,13 @@ interface ReminderEmailPayload {
   reminderKind: ReminderKind;
 }
 
-async function sendReminderEmail({ to, will, deadline, reminderKind }: ReminderEmailPayload): Promise<void> {
+async function sendReminderEmail({ to, will, deadline, reminderKind }: ReminderEmailPayload): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.RESEND_FROM_EMAIL;
 
   if (!apiKey || !fromEmail) {
     console.info(`[reminders] Skipping email for ${to}; provider not configured.`);
-    return;
+    return false;
   }
 
   const subject =
@@ -451,6 +456,8 @@ async function sendReminderEmail({ to, will, deadline, reminderKind }: ReminderE
     const fallback = await response.text();
     throw new Error(`Resend request failed: ${response.status} ${fallback}`);
   }
+
+  return true;
 }
 
 async function sendConfirmationEmail({
