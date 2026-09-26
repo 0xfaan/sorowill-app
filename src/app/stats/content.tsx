@@ -49,8 +49,8 @@ export function StatsContent() {
 
         const client = getSoroWillClient();
 
-        // Attempt to fetch protocol stats
-        // Note: This depends on the contract exposing get_protocol_stats method
+        // Primary path: attempt to fetch protocol stats if supported by client;
+        // fallback enumerates all wills across the protocol (#205, #206, #208).
         try {
           const protocolStats = await (client as unknown as { getProtocolStats?: () => Promise<unknown> }).getProtocolStats?.();
           if (protocolStats && typeof protocolStats === 'object') {

@@ -105,4 +105,36 @@ describe('BeneficiaryForm', () => {
 
     expect(onChange).toHaveBeenCalled();
   });
+
+  it('distributes remainder to the last beneficiaries on equal split (#91)', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const beneficiaries: Beneficiary[] = [
+      { address: 'GA', percentage: 0 },
+      { address: 'GB', percentage: 0 },
+      { address: 'GC', percentage: 0 },
+    ];
+    render(<BeneficiaryForm value={beneficiaries} onChange={onChange} />);
+
+    await user.click(screen.getByRole('button', { name: /split equally/i }));
+
+    expect(onChange).toHaveBeenCalledWith([
+      { address: 'GA', percentage: 33 },
+      { address: 'GB', percentage: 33 },
+      { address: 'GC', percentage: 34 },
+    ]);
+  });
+
+  it('clamps percentage inputs to valid range 0-100 and integers (#111)', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const beneficiaries: Beneficiary[] = [{ address: 'GA', percentage: 50 }];
+    render(<BeneficiaryForm value={beneficiaries} onChange={onChange} />);
+
+    const input = screen.getByDisplayValue(50) as HTMLInputElement;
+    await user.clear(input);
+    await user.type(input, '150');
+
+    expect(onChange).toHaveBeenCalledWith([{ address: 'GA', percentage: 100 }]);
+  });
 });

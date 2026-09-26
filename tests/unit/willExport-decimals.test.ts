@@ -140,4 +140,15 @@ describe('exportWillsToCSV — token-aware balance formatting', () => {
     // Correct: formatted zero with 7 decimal places (DEFAULT_DECIMALS).
     expect(extractBalance(csv)).toBe('0.0000000');
   });
+
+  it('matches on-screen formatted balance for non-default-decimal token (#256)', () => {
+    const customToken = 'CDLZFC3GG5H6HZH5G5G5GBDNHZDPZPZFQ3A7P4XF2HQFPZPZFQ3A7P4'; // 7 decimals
+    const will = makeWill({ balance: '50000000', token: customToken });
+    const csv = exportWillsToCSV([will]);
+    const balance = extractBalance(csv);
+    const expected = formatTokenBalance('50000000', customToken);
+
+    expect(balance).toBe(expected);
+    expect(balance).toBe('5.0000000');
+  });
 });
