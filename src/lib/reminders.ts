@@ -343,62 +343,90 @@ export async function dispatchReminderEmails(): Promise<ReminderDispatchResult> 
     const subscriptions = Object.values(store.subscriptions);
     const client = getSoroWillClient();
 
-    for (const subscription of subscriptions) {
-      try {
-        if (!subscription.confirmed) {
-          sentCount.skipped += 1;
-          continue;
-        }
+    // #336 — Process subscriptions in concurrent batches rather than strictly
+    // one at a time.  Each subscription involves at least two network round
+    // trips (getWill RPC + Resend API call), so sequential processing linearly
+    // scales the total wall-clock time and makes large stores exceed the
+    // Vercel function timeout.  Bounded concurrency keeps peak parallelism
+    // under control without blocking on each item individually.
+    const BATCH_SIZE = 10;
 
-        const will = await client.getWill(subscription.willId);
-        if (will.status !== WillStatus.Active) {
-          sentCount.skipped += 1;
-          continue;
-        }
+    for (let batchStart = 0; batchStart < subscriptions.length; batchStart += BATCH_SIZE) {
+      const batch = subscriptions.slice(batchStart, batchStart + BATCH_SIZE);
 
-        const deadline = nextCheckinDeadline(will);
-        const remainingMs = deadline.getTime() - Date.now();
-        if (remainingMs <= 0) {
-          sentCount.skipped += 1;
-          continue;
-        }
+      // Process each subscription in the batch concurrently.
+      const results = await Promise.allSettled(
+        batch.map(async (subscription) => {
+          if (!subscription.confirmed) {
+            return { action: 'skipped' as const };
+          }
 
-        const daysRemaining = remainingMs / 86_400_000;
-        const reminderKind = getReminderKind(daysRemaining);
+          const will = await client.getWill(subscription.willId);
+          if (will.status !== WillStatus.Active) {
+            return { action: 'skipped' as const };
+          }
 
-        const historyKey = getHistoryKey(subscription.willId, subscription.email);
-        const historyEntry = store.history[historyKey] ?? {
-          willId: subscription.willId,
-          email: subscription.email,
-        };
+          const deadline = nextCheckinDeadline(will);
+          const remainingMs = deadline.getTime() - Date.now();
+          if (remainingMs <= 0) {
+            return { action: 'skipped' as const };
+          }
 
-        const alreadySent =
-          reminderKind === 'imminent' ? Boolean(historyEntry.imminentSentAt) : Boolean(historyEntry.wellBeforeSentAt);
-        if (alreadySent) {
-          sentCount.skipped += 1;
-          continue;
-        }
+          const daysRemaining = remainingMs / 86_400_000;
+          const reminderKind = getReminderKind(daysRemaining);
 
-        await sendReminderEmail({
-          to: subscription.email,
-          will,
-          deadline,
-          reminderKind,
-        });
+          const historyKey = getHistoryKey(subscription.willId, subscription.email);
+          const historyEntry = store.history[historyKey] ?? {
+            willId: subscription.willId,
+            email: subscription.email,
+          };
 
-        if (reminderKind === 'imminent') {
-          historyEntry.imminentSentAt = new Date().toISOString();
+          const alreadySent =
+            reminderKind === 'imminent'
+              ? Boolean(historyEntry.imminentSentAt)
+              : Boolean(historyEntry.wellBeforeSentAt);
+          if (alreadySent) {
+            return { action: 'skipped' as const };
+          }
+
+          await sendReminderEmail({
+            to: subscription.email,
+            will,
+            deadline,
+            reminderKind,
+          });
+
+          if (reminderKind === 'imminent') {
+            historyEntry.imminentSentAt = new Date().toISOString();
+          } else {
+            historyEntry.wellBeforeSentAt = new Date().toISOString();
+          }
+
+          return { action: 'sent' as const, historyKey, historyEntry, email: subscription.email };
+        }),
+      );
+
+      // Accumulate counts and history updates from the completed batch.
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          if (result.value.action === 'sent') {
+            store.history[result.value.historyKey] = result.value.historyEntry;
+            sentCount.sent += 1;
+          } else {
+            sentCount.skipped += 1;
+          }
         } else {
-          historyEntry.wellBeforeSentAt = new Date().toISOString();
+          // result.status === 'rejected'
+          const message =
+            result.reason instanceof Error ? result.reason.message : 'Unknown reminder error';
+          errors.push(message);
         }
-
-        store.history[historyKey] = historyEntry;
-        await writeStore(store);
-        sentCount.sent += 1;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown reminder error';
-        errors.push(`${subscription.email}: ${message}`);
       }
+
+      // #336 — Write the store once per batch (rather than once per email) so
+      // the number of KV writes is O(batches) instead of O(subscriptions).
+      // This also ensures history is flushed even if a subsequent batch errors.
+      await writeStore(store);
     }
 
     return { sent: sentCount.sent, skipped: sentCount.skipped, errors };
@@ -406,6 +434,7 @@ export async function dispatchReminderEmails(): Promise<ReminderDispatchResult> 
     await releaseLock(lockToken);
   }
 }
+
 
 interface ReminderEmailPayload {
   to: string;
