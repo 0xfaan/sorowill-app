@@ -105,8 +105,9 @@ function ToastItem({ toast, onDismiss }: ToastItemProps) {
   return (
     <div
       className={`${bgColor} flex items-center gap-3 rounded-lg px-4 py-3 text-sm text-white shadow-lg animate-in fade-in slide-in-from-bottom-4 duration-200`}
-      role="status"
-      aria-label={toast.variant}
+      // Errors interrupt; success/info wait politely. No aria-label, so the
+      // message text itself is what gets announced.
+      role={toast.variant === 'error' ? 'alert' : 'status'}
     >
       <span className="font-semibold">{icon}</span>
       <span className="flex-1">{toast.message}</span>
