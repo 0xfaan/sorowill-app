@@ -10,9 +10,30 @@ export interface ReminderSubscription {
   email: string;
   owner: string;
   confirmed: boolean;
-  confirmationToken: string;
+  confirmationToken?: string | null;
+  confirmationExpiresAt?: string | null;
+  unsubscribeToken?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Window during which a confirmation token is valid (24 hours).
+ * Expired tokens cannot be confirmed and return an error.
+ */
+export const CONFIRMATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Escapes characters with special meaning in HTML contexts.
+ * Applied to all dynamic values interpolated into HTML email templates.
+ */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 export interface ReminderHistoryEntry {
