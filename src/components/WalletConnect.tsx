@@ -26,23 +26,22 @@ interface ErrorInfo {
   message: string;
 }
 
-function classifyError(err: unknown): ErrorInfo {
+export function classifyError(err: unknown): ErrorInfo {
   const rawMessage = err instanceof Error ? err.message : 'Failed to connect wallet';
   const message = formatError(err);
 
-  if (
-    rawMessage.includes('Freighter') ||
-    rawMessage.includes('not found') ||
-    rawMessage.includes('not installed')
-  ) {
-    return { type: 'not_installed', message };
-  }
+  // Declined is checked first: a rejection message can also mention Freighter.
   if (
     rawMessage.includes('declined') ||
     rawMessage.includes('denied') ||
     rawMessage.includes('rejected')
   ) {
     return { type: 'user_declined', message };
+  }
+  // Only an explicit "not installed" means the extension is missing; broad
+  // matches such as 'not found' misreport RPC errors like 'Account not found'.
+  if (rawMessage.includes('not installed')) {
+    return { type: 'not_installed', message };
   }
   return { type: 'generic', message };
 }
