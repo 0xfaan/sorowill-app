@@ -27,13 +27,13 @@
  */
 const TOKEN_DECIMALS_REGISTRY: Record<string, number> = {
   // Testnet USDC (Circle / Centre SAC)
-  ccw67htgnfmxkfgrr2mkrb2v6dnfgblxjofkldlnoicl5ux4yk7cpla: 6,
+  ccw67htgnfmxkfgrr2mkrb2v6dnfgblxjofkldlnoicl5ux4yk7cplaa: 6,
   // Mainnet USDC
   cbieltk6ybzbbfxdgbtnmwcfmhbzlkr5cbkntw6ycjlibdwxbvjsf7fd: 6,
   // Mainnet EURC (Circle)
-  certlk5lj55fpnqmkv5aefkzqkx3bgxmxdmhwrm4gv7ikhwlxm5h5md: 6,
+  certlk5lj55fpnqmkv5aefkzqkx3bgxmxdmhwrm4gv7ikhwlxm5h5mda: 6,
   // Testnet XLM SAC (wrapped native)
-  cdlzfc3gg5h6hzh5g5g5gbdnhzdpzpzfq3a7p4xf2hqfpzpzfq3a7p4: 7,
+  cdlzfc3gg5h6hzh5g5g5gbdnhzdpzpzfq3a7p4xf2hqfpzpzfq3a7p4a: 7,
 };
 
 /** Decimal count used when the token is not in the registry. */
@@ -52,8 +52,8 @@ export function getTokenDecimals(tokenAddress: string): number {
  * human-readable decimal string using the correct precision for `tokenAddress`.
  *
  * Examples:
- *   formatTokenBalance('1000000', 'CUSDC...', 6)  →  '1.00'
- *   formatTokenBalance('10000000', 'CXLM...', 7)  →  '1.00'
+ *   formatTokenBalance('1000000', 'CUSDC...', 6)  →  '1.000000'
+ *   formatTokenBalance('10000000', 'CXLM...', 7)  →  '1.0000000'
  *   formatTokenBalance('100', 'CTOKEN...', 2)     →  '1.00'
  *
  * The result always has exactly `decimals` fractional digits and uses
@@ -67,18 +67,21 @@ export function formatTokenBalance(
 ): string {
   const decimals = decimalsOverride ?? getTokenDecimals(tokenAddress);
   const raw = typeof balanceBaseUnits === 'bigint' ? balanceBaseUnits : BigInt(balanceBaseUnits);
+
+  const isNegative = raw < 0n;
+  const absRaw = isNegative ? -raw : raw;
+
+  if (decimals <= 0) {
+    const formattedWhole = new Intl.NumberFormat('en-US').format(absRaw);
+    return `${isNegative ? '-' : ''}${formattedWhole}`;
+  }
+
   const divisor = BigInt(10) ** BigInt(decimals);
+  const whole = absRaw / divisor;
+  const fraction = absRaw % divisor;
 
-  const whole = raw / divisor;
-  const fraction = raw % divisor;
-
-  // Format fractional part with leading zeros, then trim/pad to `decimals` digits.
+  const formattedWhole = new Intl.NumberFormat('en-US').format(whole);
   const fracStr = fraction.toString().padStart(decimals, '0');
 
-  // Build the full number string and let Intl format thousands separators.
-  const fullNumber = parseFloat(`${whole}.${fracStr}`);
-  return new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  }).format(fullNumber);
+  return `${isNegative ? '-' : ''}${formattedWhole}.${fracStr}`;
 }

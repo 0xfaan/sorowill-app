@@ -52,13 +52,13 @@ function extractBalance(csv: string): string {
 describe('getTokenDecimals', () => {
   it('returns 6 for a known USDC testnet address', () => {
     expect(
-      getTokenDecimals('CCW67HTGNFMXKFGRR2MKRB2V6DNFGBLXJOFKLDLNOICL5UX4YK7CPLA'),
+      getTokenDecimals('CCW67HTGNFMXKFGRR2MKRB2V6DNFGBLXJOFKLDLNOICL5UX4YK7CPLAA'),
     ).toBe(6);
   });
 
   it('is case-insensitive', () => {
     expect(
-      getTokenDecimals('ccw67htgnfmxkfgrr2mkrb2v6dnfgblxjofkldlnoicl5ux4yk7cpla'),
+      getTokenDecimals('ccw67htgnfmxkfgrr2mkrb2v6dnfgblxjofkldlnoicl5ux4yk7cplaa'),
     ).toBe(6);
   });
 
@@ -103,7 +103,7 @@ describe('exportWillsToCSV — token-aware balance formatting', () => {
     // Since 'CUSDC-6-DECIMALS' is not in the registry the default (7) applies here —
     // the important assertion is that the value is NOT the USDC-hardcoded '1' (1e6/1e6).
     // Use a real registry token instead:
-    const usdcTestnet = 'CCW67HTGNFMXKFGRR2MKRB2V6DNFGBLXJOFKLDLNOICL5UX4YK7CPLA';
+    const usdcTestnet = 'CCW67HTGNFMXKFGRR2MKRB2V6DNFGBLXJOFKLDLNOICL5UX4YK7CPLAA';
     const usdcWill = makeWill({ balance: '1000000', token: usdcTestnet });
     const usdcCsv = exportWillsToCSV([usdcWill]);
     const balance = extractBalance(usdcCsv);

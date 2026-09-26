@@ -55,6 +55,14 @@ describe('sorowill.ts helpers', () => {
     });
   });
 
+  describe('getExplorerNetworkSegment', () => {
+    it('returns public for mainnet and testnet for testnet', async () => {
+      const { getExplorerNetworkSegment } = await import('@/lib/sorowill');
+      expect(getExplorerNetworkSegment('mainnet')).toBe('public');
+      expect(getExplorerNetworkSegment('testnet')).toBe('testnet');
+    });
+  });
+
   describe('stellarExpertUrl', () => {
     it('should generate correct URL for contract on testnet', async () => {
       const { stellarExpertUrl } = await import('@/lib/sorowill');
@@ -90,13 +98,13 @@ describe('sorowill.ts helpers', () => {
       expect(url).toContain(txHash);
     });
 
-    it('should include the network in the URL path', async () => {
+    it('should include public for mainnet and testnet for testnet in the URL path', async () => {
       const { stellarExpertUrl } = await import('@/lib/sorowill');
 
       const url = stellarExpertUrl('contract', 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4');
 
-      // URL should have format: https://stellar.expert/explorer/{network}/{kind}/{id}
-      expect(url).toMatch(/stellar\.expert\/explorer\/(testnet|mainnet)\//);
+      // URL should have format: https://stellar.expert/explorer/{testnet|public}/{kind}/{id}
+      expect(url).toMatch(/stellar\.expert\/explorer\/(testnet|public)\//);
     });
 
     it('should handle all three kinds: contract, account, tx', async () => {
