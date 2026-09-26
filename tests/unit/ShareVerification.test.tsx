@@ -47,10 +47,10 @@ describe('ShareVerification — copy failure toast (#241)', () => {
 
     // Assert: an error toast appears with a user-visible message
     await waitFor(() => {
-      expect(screen.getByRole('status')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toBeInTheDocument();
     });
 
-    const toast = screen.getByRole('status');
+    const toast = screen.getByRole('alert');
     expect(toast).toHaveTextContent(/failed to copy/i);
   });
 
@@ -69,6 +69,6 @@ describe('ShareVerification — copy failure toast (#241)', () => {
     });
 
     // No error toast visible
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });

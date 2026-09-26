@@ -15,6 +15,7 @@ import { isValidAmount } from '@/lib/amount';
 import { BeneficiaryForm } from '@/components/BeneficiaryForm';
 import { GuardianForm } from '@/components/GuardianForm';
 import { validateGuardians } from '@/lib/guardianValidation';
+import { useStableRowIds } from '@/lib/useStableRowIds';
 
 const CHECKIN_OPTIONS = [30, 60, 90, 180, 365];
 const GRACE_OPTIONS = [3, 7, 14];
@@ -73,18 +74,7 @@ export default function NewWillPage() {
   const [cloneLoading, setCloneLoading] = useState(false);
   const [resumeAvailable, setResumeAvailable] = useState(false);
 
-  const [guardianIds, setGuardianIds] = useState<Map<number, string>>(new Map());
-
-  const stableGuardianIds = useMemo(() => {
-    const newIds = new Map(guardianIds);
-    guardians.forEach((_, index) => {
-      if (!newIds.has(index)) {
-        newIds.set(index, crypto.randomUUID());
-      }
-    });
-    setGuardianIds(newIds);
-    return newIds;
-  }, [guardians.length]);
+  const stableGuardianIds = useStableRowIds(guardians.length);
 
   const [resolvedGuardians, setResolvedGuardians] = useState<Map<string, string>>(new Map());
   const [resolvingGuardianId, setResolvingGuardianId] = useState<string | null>(null);

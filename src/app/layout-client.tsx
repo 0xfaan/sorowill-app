@@ -24,6 +24,7 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
             <Image src="/logo.svg" alt="SoroWill Logo" width={24} height={24} className="h-6 w-6 shrink-0" priority />
             Soro<span className="text-will-purple">Will</span>
           </Link>
+          <div className="flex items-center gap-6">
           <nav className="hidden items-center gap-6 text-sm text-will-light/70 sm:flex">
             <Link
               href="/dashboard"
@@ -47,8 +48,11 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
             >
               Create a Will
             </Link>
-            <HeaderContextArea />
           </nav>
+          {/* Outside the sm-only nav so wallet, network, language and theme
+              controls stay reachable on phone widths. */}
+          <HeaderContextArea />
+          </div>
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">{children}</main>

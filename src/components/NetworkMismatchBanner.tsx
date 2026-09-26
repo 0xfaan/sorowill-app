@@ -82,8 +82,10 @@ export function NetworkMismatchBanner() {
       return;
     }
 
+    // An unrecognised wallet network (e.g. FUTURENET, STANDALONE) is `null`
+    // here and can never match the app network, so it is a mismatch too.
     const walletNetwork = normalizeWalletNetwork(walletInfo.network);
-    if (walletNetwork && walletNetwork !== appNetwork) {
+    if (walletNetwork !== appNetwork) {
       setMismatch({ appNetwork, walletNetwork: walletInfo.network });
     } else {
       setMismatch(null);
