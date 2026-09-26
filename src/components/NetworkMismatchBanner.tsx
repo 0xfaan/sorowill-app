@@ -11,6 +11,9 @@ const STORAGE_KEY = 'sorowill_network_mismatch_dismissed';
 /** How often to re-check the wallet network while the page stays open. */
 const POLL_INTERVAL_MS = 4000;
 
+// NetworkMismatchBanner is mounted centrally in HeaderContextArea (#247) and re-evaluates
+// on focus/visibility change and polling (#85, #214).
+
 interface Mismatch {
   appNetwork: SoroWillNetwork;
   walletNetwork: string;
