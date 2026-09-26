@@ -24,6 +24,20 @@ fix/N-short-description
 - Test the affected page in a real browser with Freighter installed where the change touches wallet or transaction flows.
 - Keep the dark purple theme (`will-purple`, `will-dark`, `will-light`) consistent with the rest of the app.
 
+### Wave PR checklist
+
+Before opening a PR for a Wave issue, verify all of the following:
+
+- [ ] Assigned to the issue by maintainer before starting work
+- [ ] PR branch name matches `feat/N-...` or `fix/N-...` format
+- [ ] PR description references the resolved issue (`Closes #N`)
+- [ ] `npm run typecheck` passes with zero TypeScript errors
+- [ ] `npm run lint` passes with zero ESLint errors
+- [ ] `npm run build` succeeds cleanly
+- [ ] `npm test` passes all Vitest test suites
+- [ ] Tested UI flow in browser with Freighter wallet (where applicable)
+- [ ] Uses designated brand design tokens (`will-purple`, `will-dark`, `will-light`)
+
 ## Before opening a PR
 
 Run these steps locally in order — they mirror exactly what CI runs in `.github/workflows/test.yml`:
