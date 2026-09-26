@@ -42,7 +42,7 @@ export interface ReminderDispatchResult {
 // Reminder subscriptions/history are persisted to a Vercel KV / Upstash Redis
 // REST endpoint so they survive across serverless invocations (the local
 // filesystem is ephemeral per-invocation on Vercel and cannot be relied on).
-// See .env.example for KV_REST_API_URL / KV_REST_API_TOKEN.
+// See .env.example and README.md#reminder-delivery for KV_REST_API_URL / KV_REST_API_TOKEN.
 //
 // NOTE: All env vars are read at call time (inside helper functions) rather
 // than at module-load time, so that tests can set process.env before calling
