@@ -24,21 +24,24 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const stored = localStorage.getItem('theme') as Theme | null;
+    // Only trust a valid stored value (matching public/theme-init.js); anything
+    // else falls back to the OS preference.
+    const stored = localStorage.getItem('theme');
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const initialTheme = stored || (prefersDark ? 'dark' : 'light');
+    const initialTheme: Theme =
+      stored === 'light' || stored === 'dark' ? stored : prefersDark ? 'dark' : 'light';
 
     setTheme(initialTheme);
     document.documentElement.setAttribute('data-theme', initialTheme);
   }, []);
 
+  // Compute the next theme first, then run side effects outside the state
+  // updater: updaters must stay pure because StrictMode may invoke them twice.
   const toggleTheme = () => {
-    setTheme((prev) => {
-      const newTheme = prev === 'dark' ? 'light' : 'dark';
-      localStorage.setItem('theme', newTheme);
-      document.documentElement.setAttribute('data-theme', newTheme);
-      return newTheme;
-    });
+    const newTheme: Theme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(newTheme);
+    localStorage.setItem('theme', newTheme);
+    document.documentElement.setAttribute('data-theme', newTheme);
   };
 
   return (
