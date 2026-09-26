@@ -68,6 +68,7 @@ let kvLock: string | null = null;
  *   POST /set/<key>                     → {result:"OK"}
  *   POST /set/<lock-key>/<token>?EX=&NX  → {result:"OK"|null}  (NX = set only if missing)
  *   POST /del/<lock-key>                → {result:1}
+ *   POST /eval                          → {result:<lua-return>}
  *   POST /pipeline                      → [{result:...}, ...]
  */
 function makeKvFetch(storeKey: string, lockKey: string) {
@@ -77,6 +78,18 @@ function makeKvFetch(storeKey: string, lockKey: string) {
     const searchParams = new URL(url).searchParams;
     const segments = path.split('/').filter(Boolean);
     const method = (init?.method ?? 'GET').toUpperCase();
+
+    // POST /eval
+    if (method === 'POST' && segments[0] === 'eval') {
+      const body = JSON.parse((init?.body as string) ?? '{}') as { script?: string; keys?: string[]; arguments?: string[] };
+      const keys = body.keys ?? [];
+      const args = body.arguments ?? [];
+      if (keys[0] === lockKey && args[0] === kvLock) {
+        kvLock = null;
+        return new Response(JSON.stringify({ result: 1 }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ result: 0 }), { status: 200 });
+    }
 
     // POST /pipeline
     if (method === 'POST' && segments[0] === 'pipeline') {
@@ -271,5 +284,89 @@ describe('#221 concurrent register + dispatch — no writes lost', () => {
     const finalStore = JSON.parse(kvStore!) as ReminderStore;
     const histEntry = finalStore.history[`${WILL_ID}:dedup@example.com`];
     expect(histEntry?.wellBeforeSentAt).toBeTruthy();
+  });
+
+  it('releaseLock uses atomic EVAL and does not delete another process lock', async () => {
+    // Simulate another process holding the lock
+    kvLock = 'other-token';
+
+    const response = await fetch(`${KV_REST_API_URL}/eval`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${KV_REST_API_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        script: `if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end`,
+        keys: [LOCK_KEY],
+        arguments: ['our-token'],
+      }),
+    });
+
+    const result = (await response.json()) as { result: number };
+    expect(result.result).toBe(0);
+    expect(kvLock).toBe('other-token');
+  });
+
+  it('dispatch survives a concurrent register mid-run (stale snapshot protection)', async () => {
+    const preStore: ReminderStore = {
+      subscriptions: {
+        [`${WILL_ID}:existing@example.com`]: {
+          willId: WILL_ID,
+          email: 'existing@example.com',
+          owner: 'GOWNER',
+          confirmed: true,
+          confirmationToken: 'tok-existing',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      },
+      history: {},
+    };
+    kvStore = JSON.stringify(preStore);
+
+    const [regResult, dispResult] = await Promise.all([
+      registerReminderSubscription({
+        willId: WILL_ID,
+        email: 'newcomer@example.com',
+        owner: 'GOWNER',
+        appUrl: 'http://localhost:3000',
+      }),
+      dispatchReminderEmails(),
+    ]);
+
+    expect(regResult.ok).toBe(true);
+    expect(dispResult.errors).toHaveLength(0);
+
+    const finalStore = JSON.parse(kvStore!) as ReminderStore;
+    expect(finalStore.subscriptions[`${WILL_ID}:newcomer@example.com`]).toBeDefined();
+    expect(finalStore.subscriptions[`${WILL_ID}:existing@example.com`]).toBeDefined();
+    expect(finalStore.history[`${WILL_ID}:existing@example.com`]?.wellBeforeSentAt).toBeTruthy();
+  });
+
+  it('re-registering a confirmed subscription preserves confirmed status', async () => {
+    const preStore: ReminderStore = {
+      subscriptions: {
+        [`${WILL_ID}:alice@example.com`]: {
+          willId: WILL_ID,
+          email: 'alice@example.com',
+          owner: 'GOWNER',
+          confirmed: true,
+          confirmationToken: 'tok-original',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      },
+      history: {},
+    };
+    kvStore = JSON.stringify(preStore);
+
+    const result = await registerReminderSubscription({
+      willId: WILL_ID,
+      email: 'alice@example.com',
+      owner: 'GOWNER',
+      appUrl: 'http://localhost:3000',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.subscription?.confirmed).toBe(true);
+    expect(result.subscription?.createdAt).toBe('2024-01-01T00:00:00.000Z');
   });
 });

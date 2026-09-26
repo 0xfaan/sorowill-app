@@ -53,6 +53,8 @@ const KV_LOCK_TTL_SECONDS = 30;
 const KV_LOCK_RETRY_DELAY_MS = 100;
 /** Maximum number of acquire retries before giving up. */
 const KV_LOCK_MAX_RETRIES = 20;
+/** Renew the lock when remaining TTL drops below this threshold (seconds). */
+const KV_LOCK_RENEW_THRESHOLD_SECONDS = 10;
 
 function kvConfig(): { url: string; token: string; storeKey: string; lockKey: string } {
   const url = process.env.KV_REST_API_URL;
@@ -119,42 +121,35 @@ async function tryAcquireLock(token: string): Promise<boolean> {
 }
 
 /**
- * Release the distributed lock. Only deletes the key when the stored value
- * matches our token (compare-and-delete via a pipeline) to avoid accidentally
- * releasing a lock that was re-acquired by another process after our TTL expired.
+ * Release the distributed lock atomically using an Upstash EVAL Lua script.
+ * Only deletes the key when the stored value matches our token (compare-and-delete).
+ * This avoids the non-atomic GET-then-DEL race where the lock could be acquired
+ * by another process after our GET but before our DEL.
  */
 async function releaseLock(token: string): Promise<void> {
-  // Use Upstash pipeline to do GET + conditional DEL atomically.
-  // Pipeline endpoint: POST /pipeline  body: array of commands
   const { url: baseUrl, token: kvToken, lockKey } = kvConfig();
-  const url = `${baseUrl}/pipeline`;
-  const response = await fetch(url, {
+  const script = `
+    local current = redis.call('GET', KEYS[1])
+    if current == ARGV[1] then
+      return redis.call('DEL', KEYS[1])
+    end
+    return 0
+  `;
+  const response = await fetch(`${baseUrl}/eval`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${kvToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify([
-      ['GET', lockKey],
-      // We'll inspect the GET result client-side; the DEL is conditional below.
-    ]),
+    body: JSON.stringify({
+      script,
+      keys: [lockKey],
+      arguments: [token],
+    }),
   });
   if (!response.ok) {
-    // Best-effort release; don't throw so the caller's finally always completes.
-    console.warn(`[reminders] Lock release GET failed: ${response.status}`);
-    return;
+    console.warn(`[reminders] Lock release EVAL failed: ${response.status}`);
   }
-  const results = (await response.json()) as Array<{ result: string | null }>;
-  const currentToken = results[0]?.result;
-  if (currentToken !== token) {
-    // Lock already expired or was acquired by another process — do not delete.
-    return;
-  }
-  // Safe to delete: token matches.
-  await fetch(`${baseUrl}/del/${encodeURIComponent(lockKey)}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${kvToken}` },
-  });
 }
 
 /**
@@ -178,6 +173,24 @@ async function acquireLock(): Promise<string> {
     `[reminders] Could not acquire store lock after ${KV_LOCK_MAX_RETRIES} retries. ` +
       'Another process may be holding it or the lock TTL has not yet expired.',
   );
+}
+
+/**
+ * Renew the distributed lock TTL if it is close to expiring.
+ * Uses Upstash REST EXPIRE to extend the lock by another KV_LOCK_TTL_SECONDS.
+ * Returns true if the lock was renewed or still has plenty of time left.
+ */
+async function renewLock(lockKey: string): Promise<boolean> {
+  const { url: baseUrl, token: kvToken } = kvConfig();
+  const response = await fetch(`${baseUrl}/expire/${encodeURIComponent(lockKey)}/${KV_LOCK_TTL_SECONDS}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${kvToken}` },
+  });
+  if (!response.ok) {
+    return false;
+  }
+  const body = (await response.json()) as { result: number | null };
+  return body.result === 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,21 +265,28 @@ export async function registerReminderSubscription({
   const lockToken = await acquireLock();
   try {
     const store = await readStore();
+    const key = `${willId}:${normalizedEmail}`;
+    const existing = store.subscriptions[key];
+
+    if (existing) {
+      if (existing.confirmed) {
+        return { ok: true, subscription: existing };
+      }
+    }
+
     const subscription: ReminderSubscription = {
       willId,
       email: normalizedEmail,
       owner,
       confirmed: false,
       confirmationToken: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
+      createdAt: existing ? existing.createdAt : new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
-    store.subscriptions[`${willId}:${normalizedEmail}`] = subscription;
+    store.subscriptions[key] = subscription;
     await writeStore(store);
 
-    // Send confirmation email outside the lock — it is idempotent and does not
-    // touch the store, so there is no need to hold the lock during the network call.
     await sendConfirmationEmail({ to: subscription.email, appUrl, token: subscription.confirmationToken });
 
     return { ok: true, subscription };
@@ -323,6 +343,9 @@ export async function unsubscribeReminderSubscription({
 
 export async function dispatchReminderEmails(): Promise<ReminderDispatchResult> {
   const lockToken = await acquireLock();
+  const { lockKey, storeKey } = kvConfig();
+  const lockAcquiredAt = Date.now();
+
   let store: ReminderStore;
   try {
     store = await readStore();
@@ -334,8 +357,8 @@ export async function dispatchReminderEmails(): Promise<ReminderDispatchResult> 
   // We hold the lock for the entire dispatch run so that a concurrent
   // registerReminderSubscription cannot clobber our history writes.
   // The lock TTL (30 s) is intentionally generous; if the dispatch takes
-  // longer than expected, the TTL will expire and the lock auto-releases —
-  // a slightly stale history entry is safer than blocking all writers forever.
+  // longer than expected, we renew the lock periodically. If renewal fails
+  // or the lock has expired, we abort to avoid writing a stale snapshot.
   try {
     const sentCount = { sent: 0, skipped: 0 };
     const errors: string[] = [];
@@ -344,6 +367,16 @@ export async function dispatchReminderEmails(): Promise<ReminderDispatchResult> 
     const client = getSoroWillClient();
 
     for (const subscription of subscriptions) {
+      // Renew lock if we are approaching the TTL threshold.
+      const elapsedSeconds = (Date.now() - lockAcquiredAt) / 1000;
+      if (elapsedSeconds > KV_LOCK_TTL_SECONDS - KV_LOCK_RENEW_THRESHOLD_SECONDS) {
+        const renewed = await renewLock(lockKey);
+        if (!renewed) {
+          console.warn('[reminders] Lock renewal failed; aborting dispatch to avoid stale writes.');
+          break;
+        }
+      }
+
       try {
         if (!subscription.confirmed) {
           sentCount.skipped += 1;
@@ -393,7 +426,24 @@ export async function dispatchReminderEmails(): Promise<ReminderDispatchResult> 
         }
 
         store.history[historyKey] = historyEntry;
-        await writeStore(store);
+
+        // Re-read the latest store and merge our history changes before writing.
+        // This prevents clobbering concurrent register/unsubscribe changes that
+        // happened while we were sending the email above.
+        try {
+          const latestStore = await readStore();
+          const latestHistory = latestStore.history ?? {};
+          const mergedHistory = { ...latestHistory, [historyKey]: historyEntry };
+
+          await writeStore({
+            subscriptions: latestStore.subscriptions,
+            history: mergedHistory,
+          });
+        } catch (mergeErr) {
+          console.warn('[reminders] Failed to merge store during dispatch, falling back to local snapshot:', mergeErr);
+          await writeStore(store);
+        }
+
         sentCount.sent += 1;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown reminder error';
