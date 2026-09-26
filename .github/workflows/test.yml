@@ -56,3 +56,7 @@ jobs:
 
       - name: Contract smoke test (mocked SDK)
         run: npx vitest run tests/unit/contract-smoke.test.ts --reporter=verbose
+
+      - name: Build Storybook
+        run: npm run build-storybook
+
