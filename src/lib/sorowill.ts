@@ -104,10 +104,16 @@ export function getSoroWillClient(): SoroWillClient {
   return cachedClient;
 }
 
+/** Returns the Stellar Expert network path segment ('public' for mainnet, 'testnet' for testnet). */
+export function getExplorerNetworkSegment(network: SoroWillNetwork): string {
+  return network === 'mainnet' ? 'public' : 'testnet';
+}
+
 /** Base URL for viewing addresses/contracts/transactions on Stellar Expert. */
 export function stellarExpertUrl(kind: 'contract' | 'account' | 'tx', id: string): string {
   const network = getNetwork();
-  return `https://stellar.expert/explorer/${network}/${kind}/${id}`;
+  const segment = getExplorerNetworkSegment(network);
+  return `https://stellar.expert/explorer/${segment}/${kind}/${id}`;
 }
 
 export interface GuardianWillsResult {

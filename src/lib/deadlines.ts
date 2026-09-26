@@ -92,9 +92,12 @@ export function formatCheckinLabel(secondsLeft: number): string {
     if (hours > 0) {
       return `Check-in due in ${hours}h ${minutes}m`;
     }
-    return `Check-in due in ${minutes}m`;
+    if (minutes > 0) {
+      return `Check-in due in ${minutes}m`;
+    }
+    return 'Check-in due in under 1m';
   }
 
-  const daysLeft = Math.ceil(secondsLeft / 86_400);
+  const daysLeft = Math.floor(secondsLeft / 86_400);
   return `Check-in due in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`;
 }
