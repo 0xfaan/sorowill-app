@@ -86,4 +86,27 @@ describe('GuardianPanel', () => {
     // The misleading "Any X of N" copy must NOT appear
     expect(screen.queryByText(/Any \d+ of \d+ guardians/)).not.toBeInTheDocument();
   });
+
+  it('shows error toast when copying invite link fails (#197)', async () => {
+    const guardian = 'GA1234567890ABCDEF1234567890ABCDEF1234567890AB';
+    const originalClipboard = navigator.clipboard;
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: vi.fn().mockRejectedValue(new Error('Permission denied')),
+      },
+    });
+
+    renderWithProviders(
+      <GuardianPanel guardians={[guardian]} guardianVotes={0} willId="123" isOwner={true} />,
+    );
+
+    const copyBtn = screen.getByRole('button', { name: /copy invite link for guardian 1/i });
+    copyBtn.click();
+
+    expect(await screen.findByRole('status', { name: /error/i })).toHaveTextContent(
+      /failed to copy invite link/i,
+    );
+
+    Object.assign(navigator, { clipboard: originalClipboard });
+  });
 });
