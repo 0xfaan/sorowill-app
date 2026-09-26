@@ -70,7 +70,7 @@ function ToastContainer() {
       className="fixed bottom-4 right-4 z-50 space-y-2"
     >
       {toasts.map((toast) => (
-        <ToastItem key={toast.id} toast={toast} onDismiss={() => removeToast(toast.id)} />
+        <ToastItem key={toast.id} toast={toast} onDismiss={removeToast} />
       ))}
     </div>
   );
@@ -78,14 +78,17 @@ function ToastContainer() {
 
 interface ToastItemProps {
   toast: Toast;
-  onDismiss: () => void;
+  /** Must be referentially stable (e.g. the provider's `removeToast`). */
+  onDismiss: (id: string) => void;
 }
 
 function ToastItem({ toast, onDismiss }: ToastItemProps) {
+  // Depends only on the toast id and the stable dismiss callback, so other
+  // toasts appearing or disappearing never restart this toast's timer.
   useEffect(() => {
-    const timer = setTimeout(onDismiss, 4000);
+    const timer = setTimeout(() => onDismiss(toast.id), 4000);
     return () => clearTimeout(timer);
-  }, [onDismiss]);
+  }, [toast.id, onDismiss]);
 
   const bgColor = {
     success: 'bg-emerald-500/90',
@@ -102,14 +105,15 @@ function ToastItem({ toast, onDismiss }: ToastItemProps) {
   return (
     <div
       className={`${bgColor} flex items-center gap-3 rounded-lg px-4 py-3 text-sm text-white shadow-lg animate-in fade-in slide-in-from-bottom-4 duration-200`}
-      role="status"
-      aria-label={toast.variant}
+      // Errors interrupt; success/info wait politely. No aria-label, so the
+      // message text itself is what gets announced.
+      role={toast.variant === 'error' ? 'alert' : 'status'}
     >
       <span className="font-semibold">{icon}</span>
       <span className="flex-1">{toast.message}</span>
       <button
         type="button"
-        onClick={onDismiss}
+        onClick={() => onDismiss(toast.id)}
         aria-label="Dismiss notification"
         className="text-white/70 hover:text-white"
       >

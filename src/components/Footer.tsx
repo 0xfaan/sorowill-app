@@ -1,40 +1,55 @@
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { NetworkBadge } from '@/components/NetworkBadge';
 
 export function Footer() {
+  const t = useTranslations('common');
+
   return (
     <footer className="flex flex-col items-center gap-4 border-t border-white/10 pt-8 pb-8 text-center text-sm text-will-light/50">
       <div className="flex items-center gap-2">
-        <p>SoroWill, built on Stellar</p>
+        <p>{t('builtOnStellar')}</p>
         <NetworkBadge />
       </div>
-      <div className="flex flex-wrap items-center justify-center gap-4">
+      <nav aria-label={t('footerNav')} className="flex flex-wrap items-center justify-center gap-4">
         <a href="https://github.com/SoroWill/sorowill-app" target="_blank" rel="noreferrer" className="hover:text-will-light">
-          GitHub
+          {t('githubLink')}
         </a>
-        <span className="text-white/20">•</span>
+        <span className="text-white/20" aria-hidden="true">
+          •
+        </span>
         <Link href="/terms" className="hover:text-will-light">
-          Terms of Use
+          {t('terms')}
         </Link>
-        <span className="text-white/20">•</span>
+        <span className="text-white/20" aria-hidden="true">
+          •
+        </span>
         <Link href="/privacy" className="hover:text-will-light">
-          Privacy Policy
+          {t('privacy')}
         </Link>
-        <span className="text-white/20">•</span>
+        <span className="text-white/20" aria-hidden="true">
+          •
+        </span>
         <Link href="/changelog" className="hover:text-will-light">
-          Changelog
+          {t('changelog')}
         </Link>
-        <span className="text-white/20">•</span>
+        <span className="text-white/20" aria-hidden="true">
+          •
+        </span>
         <Link href="/stats" className="hover:text-will-light">
-          Stats
+          {t('stats')}
         </Link>
-        <span className="text-white/20">•</span>
+        <span className="text-white/20" aria-hidden="true">
+          •
+        </span>
         <Link href="/faq" className="hover:text-will-light">
-          FAQ
+          {t('faq')}
         </Link>
-        <span className="text-white/20">•</span>
-        <span>MIT License</span>
-      </div>
+        <span className="text-white/20" aria-hidden="true">
+          •
+        </span>
+        <span>{t('mitLicense')}</span>
+      </nav>
     </footer>
   );
 }

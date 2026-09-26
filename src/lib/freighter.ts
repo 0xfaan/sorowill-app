@@ -78,7 +78,16 @@ export async function safeGetWalletNetwork(): Promise<{
   }
 }
 
-/** Truncates a Stellar address for display, e.g. `GABC...WXYZ`. */
+/**
+ * Truncates a Stellar address for display, e.g. `GABC...WXYZ`.
+ *
+ * This helper is Stellar-address-specific: real callers only ever pass a
+ * Stellar public key, which is always exactly 56 characters (`G` followed by
+ * 55 base32 characters). The `length <= 12` short-circuit below is therefore a
+ * defensive no-op for hypothetical non-Stellar input — it is unreachable for
+ * real Stellar addresses, but kept so the function degrades gracefully rather
+ * than producing a nonsensical `slice` result for short strings.
+ */
 export function truncateAddress(address: string): string {
   if (address.length <= 12) {
     return address;

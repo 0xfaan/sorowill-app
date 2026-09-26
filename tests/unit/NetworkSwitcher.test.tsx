@@ -34,7 +34,7 @@ describe('NetworkSwitcher', () => {
   it('reverts the dropdown to the original network via React state when the confirm dialog is cancelled', async () => {
     render(<NetworkSwitcher />);
 
-    const select = (await screen.findByRole('combobox')) as HTMLSelectElement;
+    const select = (await screen.findByRole('combobox', { name: /network/i })) as HTMLSelectElement;
     expect(select.value).toBe('testnet');
 
     // User selects a different network, which should open the confirmation.
@@ -51,7 +51,7 @@ describe('NetworkSwitcher', () => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
     expect(
-      (screen.getByRole('combobox') as HTMLSelectElement).value,
+      (screen.getByRole('combobox', { name: /network/i }) as HTMLSelectElement).value,
     ).toBe('testnet');
   });
 });

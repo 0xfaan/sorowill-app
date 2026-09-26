@@ -28,15 +28,29 @@ export function DestructiveActionConfirmation({
     }
   }, [isOpen]);
 
+  // Escape cancels, so keyboard users can dismiss without the mouse
+  useEffect(() => {
+    if (!isOpen) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') onCancel();
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onCancel]);
+
   if (!isOpen) return null;
 
   const expectedText = confirmationType === 'willId' ? willId : 'CONFIRM';
   const isConfirmed = inputText === expectedText;
 
   return (
-    <div role="dialog" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="destructive-action-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-md rounded-xl border border-white/10 bg-will-dark p-6 space-y-4">
-        <h2 className="text-lg font-bold text-will-light">
+        <h2 id="destructive-action-title" className="text-lg font-bold text-will-light">
           {action === 'cancel_will' && 'Cancel this will'}
           {action === 'switch_network' && 'Switch network'}
           {action !== 'cancel_will' && action !== 'switch_network' && 'Destructive Action'}
