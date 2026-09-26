@@ -5,6 +5,16 @@ export function nextCheckinDeadline(will: Will): Date {
   return new Date(will.lastCheckin.getTime() + will.checkinPeriodDays * 86_400 * 1000);
 }
 
+/**
+ * Shared check-in deadline helper. `reminders.ts` previously defined its own
+ * private `buildDeadline(will)` with the exact same formula; it now imports
+ * this helper so reminder emails quote the same deadline the rest of the app
+ * displays.
+ */
+export function buildDeadline(will: Will): Date {
+  return nextCheckinDeadline(will);
+}
+
 export function graceDeadline(will: Will): Date | null {
   if (!will.triggerTime) {
     return null;

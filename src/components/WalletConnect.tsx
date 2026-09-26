@@ -26,17 +26,11 @@ interface ErrorInfo {
   message: string;
 }
 
-function classifyError(err: unknown): ErrorInfo {
+export function classifyError(err: unknown): ErrorInfo {
   const rawMessage = err instanceof Error ? err.message : 'Failed to connect wallet';
   const message = formatError(err);
 
-  if (
-    rawMessage.includes('Freighter') ||
-    rawMessage.includes('not found') ||
-    rawMessage.includes('not installed')
-  ) {
-    return { type: 'not_installed', message };
-  }
+  // Declined is checked first: a rejection message can also mention Freighter.
   if (
     rawMessage.includes('declined') ||
     rawMessage.includes('denied') ||
@@ -44,7 +38,24 @@ function classifyError(err: unknown): ErrorInfo {
   ) {
     return { type: 'user_declined', message };
   }
+  // Only an explicit "not installed" means the extension is missing; broad
+  // matches such as 'not found' misreport RPC errors like 'Account not found'.
+  if (rawMessage.includes('not installed')) {
+    return { type: 'not_installed', message };
+  }
   return { type: 'generic', message };
+}
+
+/**
+ * Returns a channel for cross-tab wallet sync, or `null` where BroadcastChannel
+ * is unavailable (SSR, Safari < 15.4, some webviews). Callers then fall back
+ * to single-tab behaviour instead of throwing.
+ */
+function openWalletChannel(): BroadcastChannel | null {
+  if (typeof BroadcastChannel === 'undefined') {
+    return null;
+  }
+  return new BroadcastChannel(BROADCAST_CHANNEL_NAME);
 }
 
 function isSessionCleared(): boolean {
@@ -91,9 +102,8 @@ export function WalletConnect() {
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+    const channel = openWalletChannel();
+    if (!channel) return;
 
     const handleMessage = (event: MessageEvent) => {
       const { type, publicKey: incomingKey } = event.data;
@@ -122,8 +132,8 @@ export function WalletConnect() {
       const connection = await safeConnectWallet();
       setPublicKey(connection.publicKey);
 
-      if (typeof window !== 'undefined') {
-        const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+      const channel = openWalletChannel();
+      if (channel) {
         channel.postMessage({
           type: 'wallet_connected',
           publicKey: connection.publicKey,
@@ -142,8 +152,8 @@ export function WalletConnect() {
     setPublicKey(null);
     setError(null);
 
-    if (typeof window !== 'undefined') {
-      const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+    const channel = openWalletChannel();
+    if (channel) {
       channel.postMessage({
         type: 'wallet_disconnected',
       });

@@ -8,6 +8,19 @@ export interface CountdownTimerProps {
   label?: string;
 }
 
+function plural(value: number, unit: string): string {
+  return `${value} ${unit}${value === 1 ? '' : 's'}`;
+}
+
+/**
+ * Spoken form of the remaining time, e.g. "1 day 2 hours 3 minutes remaining".
+ * Minute precision keeps the accessible name from changing every second.
+ */
+function describeRemaining(overdue: boolean, days: number, hours: number, minutes: number): string {
+  if (overdue) return 'Overdue';
+  return `${plural(days, 'day')} ${plural(hours, 'hour')} ${plural(minutes, 'minute')} remaining`;
+}
+
 export function CountdownTimer({ deadline, label }: CountdownTimerProps) {
   const computeSeconds = () => Math.floor((deadline.getTime() - Date.now()) / 1000);
   const [secondsLeft, setSecondsLeft] = useState(() => computeSeconds());
@@ -89,7 +102,11 @@ export function CountdownTimer({ deadline, label }: CountdownTimerProps) {
   return (
     <div className="flex flex-col gap-1">
       {label ? <span className="text-xs uppercase tracking-wide text-will-light/60">{label}</span> : null}
-      <span className={`font-mono text-2xl font-semibold tabular-nums ${colorClass}`}>
+      <span
+        role="timer"
+        aria-label={describeRemaining(overdue, days, hours, minutes)}
+        className={`font-mono text-2xl font-semibold tabular-nums ${colorClass}`}
+      >
         {overdue ? 'Overdue — ' : ''}
         {pad(days)}:{pad(hours)}:{pad(minutes)}:{pad(seconds)}
       </span>
