@@ -2,13 +2,43 @@ import { NextResponse } from 'next/server';
 
 import { unsubscribeReminderSubscription } from '@/lib/reminders';
 
-export async function GET(request: Request) {
+async function handleUnsubscribe(request: Request) {
   const url = new URL(request.url);
-  const willId = url.searchParams.get('willId') || '';
-  const email = url.searchParams.get('email') || '';
+  let willId = url.searchParams.get('willId') || undefined;
+  let email = url.searchParams.get('email') || undefined;
+  let token = url.searchParams.get('token') || undefined;
+
+  if (request.method === 'POST') {
+    try {
+      const contentType = request.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const body = await request.json();
+        if (body.token) token = body.token;
+        if (body.willId) willId = body.willId;
+        if (body.email) email = body.email;
+      } else if (contentType.includes('application/x-www-form-urlencoded')) {
+        const formData = await request.formData();
+        if (formData.get('token')) token = String(formData.get('token'));
+        if (formData.get('willId')) willId = String(formData.get('willId'));
+        if (formData.get('email')) email = String(formData.get('email'));
+      }
+    } catch {
+      // Fall back to query parameters if body parsing fails
+    }
+  }
+
+  if (!token) {
+    return new NextResponse(
+      `<!doctype html><html><body style="font-family: sans-serif; padding: 2rem;"><p>A valid unsubscribe token is required.</p></body></html>`,
+      {
+        status: 400,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      },
+    );
+  }
 
   try {
-    const result = await unsubscribeReminderSubscription({ willId, email });
+    const result = await unsubscribeReminderSubscription({ token, willId, email });
     const message = result.ok
       ? 'You have been unsubscribed from check-in reminder emails for this will.'
       : result.error || 'Could not process unsubscribe request.';
@@ -24,4 +54,12 @@ export async function GET(request: Request) {
     const message = error instanceof Error ? error.message : 'Could not process unsubscribe request.';
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
+}
+
+export async function GET(request: Request) {
+  return handleUnsubscribe(request);
+}
+
+export async function POST(request: Request) {
+  return handleUnsubscribe(request);
 }
