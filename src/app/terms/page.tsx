@@ -11,7 +11,7 @@ export default function TermsPage() {
     <div className="space-y-8 pb-16">
       <section className="space-y-4">
         <h1 className="text-3xl font-bold text-will-light">Terms of Use</h1>
-        <p className="text-sm text-will-light/60">Last updated: July 2026</p>
+        <p className="text-sm text-will-light/60">Last updated: September 2026</p>
       </section>
 
       <section className="prose prose-invert max-w-none space-y-6 text-will-light/80">
@@ -41,15 +41,16 @@ export default function TermsPage() {
         <div className="space-y-4">
           <h2 className="text-xl font-semibold text-will-light">3. Data Collection and Privacy</h2>
           <p>
-            We collect minimal data:
+            We collect minimal data needed to operate the application:
           </p>
           <ul className="list-inside space-y-2 pl-4">
             <li>• Wallet addresses (public blockchain data)</li>
             <li>• Will configuration details (stored on-chain)</li>
             <li>• Check-in activity (recorded on-chain)</li>
+            <li>• Optional reminder email, will ID, and owner address when you enable check-in reminders; these are stored server-side in KV/Redis and delivered through Resend</li>
           </ul>
           <p className="mt-4">
-            We do not collect personal information beyond what is necessary to operate the application. No private data, transaction amounts, or beneficiary details not already on-chain are stored by SoroWill servers.
+            We do not collect private keys. Optional reminder data is stored only to deliver and manage reminders; unsubscribe links remove that subscription. No analytics service is currently enabled.
           </p>
         </div>
 

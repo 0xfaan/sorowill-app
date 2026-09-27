@@ -4,7 +4,7 @@
 
 **On-chain inheritance, in your browser**
 
-[![Next.js](https://img.shields.io/badge/Next.js-14-000000?logo=next.js)](https://nextjs.org/)
+[![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-3-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![Stellar](https://img.shields.io/badge/Stellar-Soroban-08b5e5?logo=stellar)](https://developers.stellar.org/)
@@ -20,7 +20,7 @@ SoroWill is a trustless, on-chain inheritance protocol on Stellar Soroban. This 
 
 ## Tech Stack
 
-- **Next.js 14** (App Router)
+- **Next.js 16** (App Router; `next` ^16.3.0)
 - **TypeScript** (strict mode)
 - **Tailwind CSS 3**
 - **[@sorowill/sdk](../sorowill-sdk)** for all contract interaction and Freighter wallet handling

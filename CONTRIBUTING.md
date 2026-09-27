@@ -20,7 +20,7 @@ fix/N-short-description
 ## Pull requests
 
 - Your PR description must reference the issue it resolves (e.g. `Closes #7`).
-- Make sure `npm run typecheck`, `npm run lint`, and `npm run build` all pass cleanly before requesting review.
+- Make sure the full CI-equivalent checklist passes cleanly before requesting review.
 - Test the affected page in a real browser with Freighter installed where the change touches wallet or transaction flows.
 - Keep the dark purple theme (`will-purple`, `will-dark`, `will-light`) consistent with the rest of the app.
 
@@ -31,32 +31,47 @@ Before opening a PR for a Wave issue, verify all of the following:
 - [ ] Assigned to the issue by maintainer before starting work
 - [ ] PR branch name matches `feat/N-...` or `fix/N-...` format
 - [ ] PR description references the resolved issue (`Closes #N`)
+- [ ] `npm audit --audit-level=high` passes
 - [ ] `npm run typecheck` passes with zero TypeScript errors
 - [ ] `npm run lint` passes with zero ESLint errors
 - [ ] `npm run build` succeeds cleanly
 - [ ] `npm test` passes all Vitest test suites
+- [ ] `npm run build-storybook` succeeds
+- [ ] `npx vitest run tests/unit/contract-smoke.test.ts --reporter=verbose` passes
+- [ ] `npm run test:e2e` and `npm run test:a11y` pass locally; CI also runs the Playwright suite against a production build
 - [ ] Tested UI flow in browser with Freighter wallet (where applicable)
 - [ ] Uses designated brand design tokens (`will-purple`, `will-dark`, `will-light`)
 
 ## Before opening a PR
 
-Run these steps locally in order — they mirror exactly what CI runs in `.github/workflows/test.yml`:
+Run these steps locally in order. Together they cover the checks in `.github/workflows/test.yml` (the e2e job installs browsers in CI):
 
 ```bash
-# 1. Type-check — catch TypeScript errors before CI does
+# 1. Dependency audit
+npm audit --audit-level=high
+
+# 2. Type-check — catch TypeScript errors before CI does
 npm run typecheck
 
-# 2. Lint — ESLint must report zero errors
+# 3. Lint — ESLint must report zero errors
 npm run lint
 
-# 3. Build — the production Next.js build must succeed
+# 4. Build — the production Next.js build must succeed
 npm run build
 
-# 4. Unit tests — all Vitest tests must pass
+# 5. Unit tests — all Vitest tests must pass
 npm run test
+
+# 6. Storybook and contract smoke coverage
+npm run build-storybook
+npx vitest run tests/unit/contract-smoke.test.ts --reporter=verbose
+
+# 7. Browser tests (also run by CI's e2e job)
+npm run test:e2e
+npm run test:a11y
 ```
 
-> **All four must pass with zero errors before you open a PR.** A PR that fails any of these steps will not be merged and may lose its Wave window.
+> **All checks must pass with zero errors before you open a PR.** A PR that fails any of these steps will not be merged and may lose its Wave window.
 
 ## Design tokens
 

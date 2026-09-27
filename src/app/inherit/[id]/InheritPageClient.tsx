@@ -16,6 +16,10 @@ function isValidWillId(id: string): boolean {
   return /^\d+$/.test(id);
 }
 
+export function claimIsAvailable(status: WillStatus, grace: Date | null, now: number): boolean {
+  return status === WillStatus.Triggered && grace !== null && now >= grace.getTime();
+}
+
 export default function InheritPageClient({ id }: { id: string }) {
   const toast = useToast();
   const willId = id;
@@ -26,6 +30,7 @@ export default function InheritPageClient({ id }: { id: string }) {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [claiming, setClaiming] = useState(false);
   const [claimTxHash, setClaimTxHash] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   const isMounted = useRef(true);
 
@@ -67,6 +72,15 @@ export default function InheritPageClient({ id }: { id: string }) {
   useEffect(() => {
     void refetch();
   }, [refetch]);
+
+  useEffect(() => {
+    if (!will || will.status !== WillStatus.Triggered) return;
+    const deadline = graceDeadline(will);
+    if (!deadline) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [will]);
 
   // Quick client-side validation before hitting the RPC layer
   if (!isValidWillId(willId)) {
@@ -137,7 +151,8 @@ export default function InheritPageClient({ id }: { id: string }) {
     : undefined;
 
   const grace = graceDeadline(will);
-  const canClaim = will.status === WillStatus.Triggered && grace !== null && Date.now() >= grace.getTime();
+  const canClaim = claimIsAvailable(will.status, grace, now);
+  const secondsUntilClaim = grace ? Math.max(0, Math.ceil((grace.getTime() - now) / 1000)) : 0;
 
   return (
     <div className="mx-auto max-w-xl space-y-6">
@@ -209,6 +224,7 @@ export default function InheritPageClient({ id }: { id: string }) {
         <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-center text-sm text-will-light/60">
           This will isn&apos;t ready to release yet. Distribution only becomes available once the owner
           misses a check-in and the grace period has fully elapsed.
+          {grace && secondsUntilClaim > 0 ? <time dateTime={grace.toISOString()} className="mt-2 block font-mono text-xs">Available in {Math.floor(secondsUntilClaim / 86400)}d {Math.floor((secondsUntilClaim % 86400) / 3600)}h {Math.floor((secondsUntilClaim % 3600) / 60)}m</time> : null}
         </div>
       )}
 
