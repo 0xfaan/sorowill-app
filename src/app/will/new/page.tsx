@@ -16,6 +16,8 @@ import { BeneficiaryForm } from '@/components/BeneficiaryForm';
 import { GuardianForm } from '@/components/GuardianForm';
 import { validateGuardians } from '@/lib/guardianValidation';
 import { useStableRowIds } from '@/lib/useStableRowIds';
+import { parseDraft, parsePeriodInput } from '@/lib/draftValidation';
+import { useToast } from '@/components/Toast';
 
 const CHECKIN_OPTIONS = [30, 60, 90, 180, 365];
 const GRACE_OPTIONS = [3, 7, 14];
@@ -89,6 +91,10 @@ export default function NewWillPage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checkinPeriodError, setCheckinPeriodError] = useState<string | null>(null);
+  const [gracePeriodError, setGracePeriodError] = useState<string | null>(null);
+
+  const toast = useToast();
 
   // Fetch the connected wallet address once so we can reject it as a guardian.
   useEffect(() => {
@@ -97,12 +103,15 @@ export default function NewWillPage() {
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const draft = localStorage.getItem(STORAGE_KEY);
-      if (draft && !cloneFromId) {
-        try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw && !cloneFromId) {
+        const draft = parseDraft(raw);
+        if (draft) {
           setResumeAvailable(true);
-        } catch {
-          setResumeAvailable(false);
+        } else {
+          // Corrupted / stale draft — discard silently here; the user will see
+          // the toast once the component has finished mounting.
+          localStorage.removeItem(STORAGE_KEY);
         }
       }
     }
@@ -126,6 +135,25 @@ export default function NewWillPage() {
 
     void fetchBalance();
   }, []);
+
+  // Clear the draft when the wallet disconnects so stale state is never
+  // re-loaded by a different account in the same browser session.
+  useEffect(() => {
+    if (ownerAddress === null) return; // not yet resolved
+
+    // Poll Freighter every 2 s; when the key disappears the user has
+    // disconnected.  safeGetPublicKey already suppresses all errors.
+    const interval = setInterval(() => {
+      void safeGetPublicKey().then((key) => {
+        if (key === null && typeof window !== 'undefined') {
+          localStorage.removeItem(STORAGE_KEY);
+          setResumeAvailable(false);
+        }
+      });
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [ownerAddress]);
 
   useEffect(() => {
     if (cloneFromId) {
@@ -167,21 +195,21 @@ export default function NewWillPage() {
 
   function resumeDraft() {
     if (typeof window !== 'undefined') {
-      const draft = localStorage.getItem(STORAGE_KEY);
-      if (draft) {
-        try {
-          const state: FormState = JSON.parse(draft);
-          setStep(state.step);
-          setToken(state.token);
-          setAmount(state.amount);
-          setBeneficiaries(state.beneficiaries);
-          setCheckinPeriodDays(state.checkinPeriodDays);
-          setGracePeriodDays(state.gracePeriodDays);
-          setGuardians(state.guardians);
-          setResumeAvailable(false);
-        } catch {
-          setError('Failed to resume draft');
-        }
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const state = parseDraft(raw);
+      if (state) {
+        setStep(state.step);
+        setToken(state.token);
+        setAmount(state.amount);
+        setBeneficiaries(state.beneficiaries);
+        setCheckinPeriodDays(state.checkinPeriodDays);
+        setGracePeriodDays(state.gracePeriodDays);
+        setGuardians(state.guardians);
+        setResumeAvailable(false);
+      } else {
+        localStorage.removeItem(STORAGE_KEY);
+        setResumeAvailable(false);
+        toast.info('Saved draft was invalid and has been discarded.');
       }
     }
   }
@@ -204,7 +232,7 @@ export default function NewWillPage() {
   // warning, not a blocking error — the user sees the warning and can proceed).
   const guardiansValid = guardianTopError === null;
 
-  const canGoNext = [isAmountValid, beneficiariesValid, true, guardiansValid, true][step];
+  const canGoNext = [isAmountValid, beneficiariesValid, checkinPeriodError === null && gracePeriodError === null, guardiansValid, true][step];
 
   // Rows that are blank — the user will see a warning that they'll be dropped.
   const blankGuardianIndices = guardians
@@ -500,16 +528,34 @@ export default function NewWillPage() {
                   type="number"
                   min={1}
                   max={3650}
+                  step={1}
                   value={checkinPeriodDays}
                   onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    if (!isNaN(val) && val > 0) {
-                      setCheckinPeriodDays(val);
+                    setCheckinPeriodError(null);
+                    const parsed = parsePeriodInput(e.target.value);
+                    if (parsed !== null) {
+                      setCheckinPeriodDays(parsed);
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const parsed = parsePeriodInput(e.target.value);
+                    if (parsed === null) {
+                      setCheckinPeriodError('Please enter a whole number of days between 1 and 3650.');
+                    } else {
+                      setCheckinPeriodError(null);
+                      setCheckinPeriodDays(parsed);
                     }
                   }}
                   placeholder="Enter days"
-                  className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none"
+                  aria-describedby={checkinPeriodError ? 'checkin-period-error' : undefined}
+                  aria-invalid={checkinPeriodError !== null}
+                  className={`rounded-lg border bg-white/5 px-3 py-2 text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none ${checkinPeriodError ? 'border-red-400' : 'border-white/10'}`}
                 />
+                {checkinPeriodError ? (
+                  <p id="checkin-period-error" role="alert" className="text-xs text-red-400">
+                    {checkinPeriodError}
+                  </p>
+                ) : null}
               </div>
               {isUnsafeCheckinPeriod(checkinPeriodDays) && (
                 <div className="rounded-lg border border-amber-400/40 bg-amber-400/5 px-3 py-3" role="status">
@@ -548,16 +594,34 @@ export default function NewWillPage() {
                   type="number"
                   min={1}
                   max={3650}
+                  step={1}
                   value={gracePeriodDays}
                   onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    if (!isNaN(val) && val > 0) {
-                      setGracePeriodDays(val);
+                    setGracePeriodError(null);
+                    const parsed = parsePeriodInput(e.target.value);
+                    if (parsed !== null) {
+                      setGracePeriodDays(parsed);
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const parsed = parsePeriodInput(e.target.value);
+                    if (parsed === null) {
+                      setGracePeriodError('Please enter a whole number of days between 1 and 3650.');
+                    } else {
+                      setGracePeriodError(null);
+                      setGracePeriodDays(parsed);
                     }
                   }}
                   placeholder="Enter days"
-                  className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none"
+                  aria-describedby={gracePeriodError ? 'grace-period-error' : undefined}
+                  aria-invalid={gracePeriodError !== null}
+                  className={`rounded-lg border bg-white/5 px-3 py-2 text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none ${gracePeriodError ? 'border-red-400' : 'border-white/10'}`}
                 />
+                {gracePeriodError ? (
+                  <p id="grace-period-error" role="alert" className="text-xs text-red-400">
+                    {gracePeriodError}
+                  </p>
+                ) : null}
               </div>
             </div>
           </fieldset>
