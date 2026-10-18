@@ -59,6 +59,13 @@ function sumPercentages(beneficiaries: Beneficiary[]): number {
 }
 
 /**
+ * Tolerance for comparing the percentage total against 100. Percentages are
+ * stored with at most two decimal places, so any drift is far below this
+ * threshold; it only guards against floating-point noise (e.g. 99.99999).
+ */
+const PERCENTAGE_SUM_EPSILON = 1e-9;
+
+/**
  * Returns a human-readable validation message for the current beneficiary
  * list, or `null` when the list is valid.
  *
@@ -94,7 +101,7 @@ function getBeneficiaryValidationMessage(beneficiaries: Beneficiary[]): string |
   }
 
   const total = sumPercentages(beneficiaries);
-  if (total !== 100) {
+  if (Math.abs(total - 100) > PERCENTAGE_SUM_EPSILON) {
     return `Total must equal 100% (currently ${total}%)`;
   }
 
