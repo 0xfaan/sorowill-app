@@ -2,6 +2,27 @@ import { type Will } from '@sorowill/sdk';
 
 import { formatTokenBalance } from '@/lib/tokenDecimals';
 
+function isValidBeneficiaryAddress(address: unknown): boolean {
+  return typeof address === 'string' && address.trim().length > 0;
+}
+
+/**
+ * Validates that every will's beneficiaries have a non-empty address before
+ * they are written into the CSV export. An empty address would otherwise
+ * silently drop a field and shift/corrupt the CSV row.
+ */
+export function validateBeneficiariesForExport(wills: Will[]): void {
+  wills.forEach((will) => {
+    const beneficiaries = Array.isArray(will.beneficiaries) ? will.beneficiaries : [];
+    beneficiaries.forEach((b) => {
+      const address = typeof b === 'string' ? b : (b as { address?: unknown })?.address;
+      if (!isValidBeneficiaryAddress(address)) {
+        throw new Error(`Will ${will.id ?? '<unknown>'} has a beneficiary with an invalid or empty address`);
+      }
+    });
+  });
+}
+
 function escapeCSVField(val: string | number | bigint | null | undefined): string {
   if (val === null || val === undefined) {
     return '';
@@ -14,6 +35,8 @@ function escapeCSVField(val: string | number | bigint | null | undefined): strin
 }
 
 export function exportWillsToCSV(wills: Will[]): string {
+  validateBeneficiariesForExport(wills);
+
   const headers = [
     'Will ID',
     'Owner',
