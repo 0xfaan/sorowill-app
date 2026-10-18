@@ -59,8 +59,8 @@ export function CopyAddress({ address, label, className = '' }: CopyAddressProps
       <button
         type="button"
         onClick={handleCopy}
-        aria-label={copied ? 'Copied!' : `Copy ${address}`}
-        title={copied ? 'Copied!' : 'Copy to clipboard'}
+        aria-label={copied ? t('copied') : t('copyAddress', { address })}
+        title={copied ? t('copied') : t('copyToClipboard')}
         className="text-will-light/40 transition hover:text-will-light/80 focus:outline-none focus-visible:ring-1 focus-visible:ring-will-purple rounded"
       >
         {copied ? (
@@ -101,7 +101,7 @@ export function CopyAddress({ address, label, className = '' }: CopyAddressProps
       </button>
       {copied && (
         <span className="text-xs text-emerald-400" aria-live="polite">
-          Copied!
+          {t('copied')}
         </span>
       )}
     </span>

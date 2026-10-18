@@ -177,3 +177,43 @@ describe('GuardianForm — owner address as guardian (#386)', () => {
     expect(screen.getByLabelText('Guardian 1 address')).not.toHaveAttribute('aria-invalid');
   });
 });
+
+describe('GuardianForm — prevents adding owner as guardian (#659)', () => {
+  const OWNER = 'GBRT6OQL3NICNKX6FFDVAZ36IABM5EB7HDNRPQ4QEMK4TJAUUMFYNFXB';
+  const OTHER = 'GDMALMOLFTCHCB74BAEZLLXFXQK57JE4BTFS2C3WJGSVF4637PRHII5S';
+
+  it('does not call onAdd when the owner address is entered', async () => {
+    const user = userEvent.setup();
+    const props = baseProps([]);
+    render(<GuardianForm {...props} ownerAddress={OWNER} />);
+
+    await user.type(screen.getByLabelText('Guardian 1 address'), OWNER);
+    await user.click(screen.getByRole('button', { name: /add guardian/i }));
+
+    expect(props.onAdd).not.toHaveBeenCalled();
+  });
+
+  it('shows the owner-as-guardian error when the owner address is entered', async () => {
+    const user = userEvent.setup();
+    const props = baseProps([]);
+    render(<GuardianForm {...props} ownerAddress={OWNER} />);
+
+    await user.type(screen.getByLabelText('Guardian 1 address'), OWNER);
+    await user.click(screen.getByRole('button', { name: /add guardian/i }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('You cannot be your own guardian');
+    expect(screen.getByLabelText('Guardian 1 address')).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('still calls onAdd for a non-owner address', async () => {
+    const user = userEvent.setup();
+    const props = baseProps([]);
+    render(<GuardianForm {...props} ownerAddress={OWNER} />);
+
+    await user.type(screen.getByLabelText('Guardian 1 address'), OTHER);
+    await user.click(screen.getByRole('button', { name: /add guardian/i }));
+
+    expect(props.onAdd).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+});
