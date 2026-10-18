@@ -92,8 +92,26 @@ export function getRpcUrl(): string {
 /**
  * Returns a lazily-initialized, module-level singleton `SoroWillClient`
  * configured from the active network.
+ *
+ * For tests, pass an `override` client instead of relying on the singleton
+ * or mutating global state:
+ *
+ * ```ts
+ * import { SoroWillClient } from '@sorowill/sdk';
+ * import { getSoroWillClient } from '@/lib/sorowill';
+ *
+ * const fakeClient = { getWill: vi.fn() } as unknown as SoroWillClient;
+ * const client = getSoroWillClient({ override: fakeClient });
+ * ```
+ *
+ * Call sites that accept a client directly (e.g. `getWillsByGuardian`) can
+ * also be passed `{ override }` to inject a mock without touching the
+ * module-level cache at all.
  */
-export function getSoroWillClient(): SoroWillClient {
+export function getSoroWillClient(options?: { override?: SoroWillClient }): SoroWillClient {
+  if (options?.override) {
+    return options.override;
+  }
   const network = getNetwork();
   const contractId = getContractId();
   if (!cachedClient || cachedNetwork !== network) {
@@ -110,8 +128,11 @@ export function stellarExpertUrl(kind: 'contract' | 'account' | 'tx', id: string
 }
 
 /** Fetches wills by guardian by scanning sequential will IDs. */
-export async function getWillsByGuardian(guardianAddress: string): Promise<Will[]> {
-  const client = getSoroWillClient();
+export async function getWillsByGuardian(
+  guardianAddress: string,
+  options?: { override?: SoroWillClient },
+): Promise<Will[]> {
+  const client = getSoroWillClient(options);
   const wills: Will[] = [];
   const promises = [];
   // Scan sequentially up to 30 wills, which covers the test environment range.

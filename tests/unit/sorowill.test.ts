@@ -191,5 +191,22 @@ describe('sorowill.ts helpers', () => {
       const client3 = getSoroWillClient();
       expect(client1).not.toBe(client3);
     });
+
+    it('allows injecting a mock client via the override option without touching global state', async () => {
+      const { getSoroWillClient, getWillsByGuardian } = await import('@/lib/sorowill');
+
+      const fakeClient = {
+        getWill: vi.fn().mockResolvedValue(null),
+      } as any;
+
+      // getSoroWillClient() itself never touches the module cache when an
+      // override is supplied.
+      expect(getSoroWillClient({ override: fakeClient })).toBe(fakeClient);
+
+      // Call sites that accept options (e.g. getWillsByGuardian) can forward
+      // the same override straight through for isolated unit tests.
+      await getWillsByGuardian('GSOMEGUARDIANADDRESS', { override: fakeClient });
+      expect(fakeClient.getWill).toHaveBeenCalled();
+    });
   });
 });
