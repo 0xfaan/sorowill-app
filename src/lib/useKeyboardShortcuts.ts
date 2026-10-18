@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 export interface ShortcutConfig {
   newWill?: string;
@@ -21,6 +21,28 @@ export function useKeyboardShortcuts({
   onHelp,
   shortcuts = {},
 }: UseKeyboardShortcutsProps) {
+  // Keep the latest callbacks/config in refs so the effect below doesn't need
+  // to depend on their identity (which is unstable across re-renders when
+  // callers pass inline functions/objects). This prevents the keydown
+  // listener from being torn down and re-attached on every parent render.
+  const onNewWillRef = useRef(onNewWill);
+  const onSearchRef = useRef(onSearch);
+  const onHelpRef = useRef(onHelp);
+  const shortcutsRef = useRef(shortcuts);
+
+  useEffect(() => {
+    onNewWillRef.current = onNewWill;
+    onSearchRef.current = onSearch;
+    onHelpRef.current = onHelp;
+    shortcutsRef.current = shortcuts;
+  }, [onNewWill, onSearch, onHelp, shortcuts]);
+
+  // Only the actual key bindings (primitive strings) should cause the
+  // listener to be re-attached; callback identity should not.
+  const keyNewWill = shortcuts.newWill || 'n';
+  const keySearch = shortcuts.search || '/';
+  const keyHelp = shortcuts.help || '?';
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       // Check if modifier keys are pressed (excluding Shift, which is needed for '?')
@@ -49,20 +71,15 @@ export function useKeyboardShortcuts({
         }
       }
 
-      // Define default keys and overrides
-      const keyNewWill = shortcuts.newWill || 'n';
-      const keySearch = shortcuts.search || '/';
-      const keyHelp = shortcuts.help || '?';
-
-      if (event.key === keyNewWill && onNewWill) {
+      if (event.key === keyNewWill && onNewWillRef.current) {
         event.preventDefault();
-        onNewWill();
-      } else if (event.key === keySearch && onSearch) {
+        onNewWillRef.current();
+      } else if (event.key === keySearch && onSearchRef.current) {
         event.preventDefault();
-        onSearch();
-      } else if (event.key === keyHelp && onHelp) {
+        onSearchRef.current();
+      } else if (event.key === keyHelp && onHelpRef.current) {
         event.preventDefault();
-        onHelp();
+        onHelpRef.current();
       }
     }
 
@@ -70,5 +87,5 @@ export function useKeyboardShortcuts({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [onNewWill, onSearch, onHelp, shortcuts]);
+  }, [keyNewWill, keySearch, keyHelp]);
 }
