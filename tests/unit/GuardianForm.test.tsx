@@ -154,6 +154,29 @@ describe('GuardianForm — validation display', () => {
   });
 });
 
+describe('GuardianForm — label associations (#672)', () => {
+  it('associates each guardian input with a <label> whose htmlFor matches the input id', () => {
+    const guardians = ['GADDR0', 'GADDR1'];
+    render(<GuardianForm {...baseProps(guardians)} />);
+
+    const first = screen.getByLabelText('Guardian 1 address');
+    const second = screen.getByLabelText('Guardian 2 address');
+
+    expect(first.tagName).toBe('INPUT');
+    expect(second.tagName).toBe('INPUT');
+    expect(first).toHaveAttribute('id', 'guardian-0');
+    expect(second).toHaveAttribute('id', 'guardian-1');
+
+    // The resolved label must point back at the input via htmlFor.
+    expect(document.querySelector('label[for="guardian-0"]')).toHaveTextContent(
+      'Guardian 1 address',
+    );
+    expect(document.querySelector('label[for="guardian-1"]')).toHaveTextContent(
+      'Guardian 2 address',
+    );
+  });
+});
+
 describe('GuardianForm — owner address as guardian (#386)', () => {
   const OWNER = 'GBRT6OQL3NICNKX6FFDVAZ36IABM5EB7HDNRPQ4QEMK4TJAUUMFYNFXB';
   const OTHER = 'GDMALMOLFTCHCB74BAEZLLXFXQK57JE4BTFS2C3WJGSVF4637PRHII5S';

@@ -106,7 +106,7 @@ function ToastItem({ toast, onDismiss }: ToastItemProps) {
       // message text itself is what gets announced.
       role={toast.variant === 'error' ? 'alert' : 'status'}
     >
-      <span className="font-semibold">{icon}</span>
+      <span className="font-semibold" aria-hidden="true">{icon}</span>
       <span className="flex-1">{toast.message}</span>
       <button
         type="button"

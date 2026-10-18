@@ -180,17 +180,35 @@ export async function resolveFederatedAddress(address: string): Promise<string> 
       throw new Error(`Federation server returned status ${response.status}`);
     }
 
-    const data = (await response.json()) as { account_id?: string };
+    // #666 — Parse the JSON defensively: a non-JSON body (e.g. HTML error
+    // page) must be rejected rather than surfacing an opaque parse error.
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error('Federation server returned a malformed federation response (invalid JSON)');
+    }
 
-    if (!data.account_id) {
+    // #666 — The payload must be a non-null, non-array object.
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+      throw new Error('Federation server returned a malformed federation response (expected an object)');
+    }
+
+    const accountId = (data as Record<string, unknown>).account_id;
+
+    if (accountId === undefined || accountId === null) {
       throw new Error('No account_id in federation response');
     }
 
-    if (!STELLAR_PUBLIC_KEY_REGEX.test(data.account_id)) {
+    if (typeof accountId !== 'string') {
+      throw new Error('Federation server returned a malformed account_id (expected a string)');
+    }
+
+    if (!STELLAR_PUBLIC_KEY_REGEX.test(accountId)) {
       throw new Error('Federation server returned a malformed account_id');
     }
 
-    return data.account_id;
+    return accountId;
   } catch (error) {
     throw new Error(
       `Failed to resolve federated address "${address}": ${error instanceof Error ? error.message : 'Unknown error'}`,
