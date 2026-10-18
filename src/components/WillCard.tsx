@@ -80,6 +80,16 @@ export function WillCard({
           ) : null}
         </div>
 
+        {will.beneficiaries?.length ? (
+          <ul aria-label="Beneficiaries" className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-will-light/70">
+            {will.beneficiaries.map((beneficiary) => (
+              <li key={beneficiary.address} className="truncate">
+                {beneficiary.address}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
         {will.status === WillStatus.Active ? (
           <p className={`text-xs ${colorClass}`} role="status">
             {formatCheckinLabel(secondsLeft)}

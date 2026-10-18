@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { resolveFederatedAddress } from '@/lib/federated';
+import { resolveFederatedAddress, FEDERATION_DOMAIN } from '@/lib/federated';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -213,6 +213,30 @@ describe('#340 — stellar.toml FEDERATION_SERVER parsing', () => {
     await expect(resolveFederatedAddress('user*domain340f.com')).rejects.toThrow(
       'No FEDERATION_SERVER found',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #679 — Federation domain comes from the exported constant
+// ---------------------------------------------------------------------------
+
+describe('#679 — resolveFederatedAddress uses FEDERATION_DOMAIN', () => {
+  it('exports a non-empty federation domain constant', () => {
+    expect(typeof FEDERATION_DOMAIN).toBe('string');
+    expect(FEDERATION_DOMAIN.length).toBeGreaterThan(0);
+  });
+
+  it('fetches stellar.toml from the FEDERATION_DOMAIN constant', async () => {
+    const [tomlRes, fedRes] = makeMockResponses(
+      'FEDERATION_SERVER = "https://fed.domain679a.com/fed"',
+    );
+    mockFetch.mockResolvedValueOnce(tomlRes).mockResolvedValueOnce(fedRes);
+
+    await resolveFederatedAddress('user*domain679a.com');
+
+    const [firstFetchUrl] = mockFetch.mock.calls[0] as [string];
+    expect(firstFetchUrl).toContain(FEDERATION_DOMAIN);
+    expect(firstFetchUrl).toBe(`https://${FEDERATION_DOMAIN}/.well-known/stellar.toml`);
   });
 });
 

@@ -15,6 +15,37 @@ export interface RateLimitResult {
   retryAfterSeconds: number;
 }
 
+/**
+ * Builds a collision-safe rate-limit key from multiple parts.
+ *
+ * Naive concatenation (e.g. `parts.join(':')`) is unsafe: if a part itself
+ * contains the separator, distinct inputs can produce the same key. For
+ * example, with `':'` as separator, `['reminders', 'register', '127.0.0.1']`
+ * and `['reminders', 'register:127.0.0.1']` both yield
+ * `'reminders:register:127.0.0.1'`. IPv6 addresses contain colons, so this is
+ * a realistic collision.
+ *
+ * Approach chosen: length-prefixed encoding. Each part is encoded as
+ * `<length>:<value>` and the parts are concatenated. Because the length is
+ * unambiguous, no part's content can ever be confused with a separator or
+ * with another part's boundary, regardless of what characters it contains.
+ * This is deterministic, human-debuggable, and avoids the overhead of
+ * JSON.stringify while being equally collision-safe.
+ *
+ * Alternatives considered:
+ *  - JSON.stringify(parts): collision-safe and simple, but produces noisier
+ *    keys and is slightly slower; length-prefixing is equivalent in safety
+ *    with less overhead.
+ *  - Validating that a separator is absent from parts and throwing: brittle,
+ *    since callers cannot always control part contents (e.g. client IPs), and
+ *    would turn a rate-limit check into a runtime error.
+ *  - Escaping the separator within parts: requires careful, error-prone
+ *    escape/unescape logic; length-prefixing sidesteps it entirely.
+ */
+export function buildRateLimitKey(...parts: string[]): string {
+  return parts.map((part) => `${part.length}:${part}`).join('|');
+}
+
 export function checkRateLimit(
   key: string,
   limit: number,
