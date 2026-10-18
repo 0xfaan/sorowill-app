@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { confirmReminderSubscription } from '@/lib/reminders';
+import { confirmReminderSubscription, escapeHtml } from '@/lib/reminders';
 
 /**
  * GET /api/reminders/confirm?token=...
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
     : result.error || 'The confirmation link is invalid or has already been used.';
 
   return new NextResponse(
-    `<!doctype html><html><body style="font-family: sans-serif; padding: 2rem;"><p>${message}</p></body></html>`,
+    `<!doctype html><html><body style="font-family: sans-serif; padding: 2rem;"><p>${escapeHtml(message)}</p></body></html>`,
     {
       status: result.ok ? 200 : 400,
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
