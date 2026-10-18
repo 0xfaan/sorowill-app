@@ -109,11 +109,20 @@ export function stellarExpertUrl(kind: 'contract' | 'account' | 'tx', id: string
   return `https://stellar.expert/explorer/${network}/${kind}/${id}`;
 }
 
+/** Result of scanning for wills where the given address is a guardian. */
+export interface GetWillsByGuardianResult {
+  wills: Will[];
+  hasErrors: boolean;
+}
+
 /** Fetches wills by guardian by scanning sequential will IDs. */
-export async function getWillsByGuardian(guardianAddress: string): Promise<Will[]> {
+export async function getWillsByGuardian(
+  guardianAddress: string,
+): Promise<GetWillsByGuardianResult> {
   const client = getSoroWillClient();
   const wills: Will[] = [];
   const promises = [];
+  let hasErrors = false;
   // Scan sequentially up to 30 wills, which covers the test environment range.
   for (let i = 1; i <= 30; i++) {
     promises.push(
@@ -124,13 +133,17 @@ export async function getWillsByGuardian(guardianAddress: string): Promise<Will[
             wills.push(will);
           }
         })
-        .catch(() => {
-          // Ignore errors (will does not exist or network error)
+        .catch((err) => {
+          // A "not found" style error for a nonexistent will id is expected;
+          // anything else indicates a real fetch failure worth surfacing.
+          if (!(err instanceof Error) || !/not found/i.test(err.message)) {
+            hasErrors = true;
+          }
         })
     );
   }
   await Promise.all(promises);
-  return wills;
+  return { wills, hasErrors };
 }
 
 

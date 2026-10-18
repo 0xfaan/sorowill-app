@@ -104,7 +104,7 @@ export default function DashboardPage() {
     setError(null);
     try {
       const client = getSoroWillClient();
-      const [owned, inheriting, guardian] = await Promise.all([
+      const [owned, inheriting, guardianResult] = await Promise.all([
         client.getWillsByOwner(owner),
         client.getWillsByBeneficiary(owner),
         getWillsByGuardian(owner),
@@ -114,7 +114,7 @@ export default function DashboardPage() {
       }
       setOwnedWills(owned);
       setInheritingWills(inheriting);
-      setGuardianWills(guardian);
+      setGuardianWills(guardianResult.wills);
       setLastFetchTime(new Date());
     } catch (err) {
       if (!isMounted.current) {
@@ -133,14 +133,14 @@ export default function DashboardPage() {
     setIsRefreshing(true);
     try {
       const client = getSoroWillClient();
-      const [owned, inheriting, guardian] = await Promise.all([
+      const [owned, inheriting, guardianResult] = await Promise.all([
         client.getWillsByOwner(publicKey),
         client.getWillsByBeneficiary(publicKey),
         getWillsByGuardian(publicKey),
       ]);
       setOwnedWills(owned);
       setInheritingWills(inheriting);
-      setGuardianWills(guardian);
+      setGuardianWills(guardianResult.wills);
       setLastFetchTime(new Date());
       setError(null);
       toast.success('Data refreshed');
