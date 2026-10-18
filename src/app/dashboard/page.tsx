@@ -11,6 +11,7 @@ import { getSoroWillClient, getWillsByGuardian } from '@/lib/sorowill';
 import { getInvalidBatchAmounts, isValidAmount } from '@/lib/amount';
 import { formatError, formatLoadError } from '@/lib/errors';
 import { exportWillsToCSV } from '@/lib/willExport';
+import { getSafeBalance } from '@/lib/tokenDecimals';
 import { useToast } from '@/components/Toast';
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts';
 import { WillCard } from '@/components/WillCard';
@@ -581,7 +582,7 @@ function DashboardPageOld() {
                   <div className="min-w-0">
                     <span className="font-semibold text-sm text-will-light">Will #{willId}</span>
                     <span className="text-xs text-will-light/50 block">
-                      Current balance: {will ? formatUSDC(BigInt(will.balance)) : '0.00'} USDC
+                      Current balance: {will ? formatUSDC(getSafeBalance(will.balance)) : '0.00'} USDC
                     </span>
                   </div>
 
