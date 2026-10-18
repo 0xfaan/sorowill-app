@@ -9,7 +9,7 @@ import { WillStatus, type Will, formatUSDC, toStroops } from '@sorowill/sdk';
 import { safeGetPublicKey } from '@/lib/freighter';
 import { getSoroWillClient, getWillsByGuardian } from '@/lib/sorowill';
 import { getInvalidBatchAmounts, isValidAmount } from '@/lib/amount';
-import { formatError, formatLoadError } from '@/lib/errors';
+import { formatError, formatLoadError, classifyCheckInError } from '@/lib/errors';
 import { exportWillsToCSV } from '@/lib/willExport';
 import { useToast } from '@/components/Toast';
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts';
@@ -232,9 +232,14 @@ function DashboardPageOld() {
       }
       toast.success('Check-in successful');
     } catch (err) {
-      const message = formatError(err);
-      setError(message);
-      toast.error(message);
+      const { kind, message } = classifyCheckInError(err);
+      const displayMessage =
+        kind === 'network'
+          ? 'Network error — check your connection and try again'
+          : `Check-in rejected by the contract: ${message}`;
+      console.error(`[Dashboard] Check-in failed (${kind}):`, err);
+      setError(displayMessage);
+      toast.error(displayMessage);
     } finally {
       setCheckingInId(null);
     }

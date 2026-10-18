@@ -23,6 +23,8 @@ function getAddressErrors(beneficiaries: Beneficiary[]): Record<number, string> 
     if (b.percentage > 0 && !b.address.trim()) {
       errors[i] = 'Address is required';
     } else if (b.address && isFederatedAddress(b.address)) {
+      // A federated address (name*domain) is only valid once resolved to a G...
+      // address; the contract rejects the raw form, so block submission.
       errors[i] = 'Federated address must be resolved before submitting — click Resolve';
     } else if (b.address && !isFederatedAddress(b.address) && !isValidStellarAddress(b.address)) {
       errors[i] = 'Invalid Stellar address';

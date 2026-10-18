@@ -241,7 +241,10 @@ export default function NewWillPage() {
   // warning, not a blocking error — the user sees the warning and can proceed).
   const guardiansValid = guardianTopError === null;
 
-  const canGoNext = [isAmountValid, beneficiariesValid, checkinPeriodError === null && gracePeriodError === null, guardiansValid, true][step];
+  const checkinPeriodUnsafe = isUnsafeCheckinPeriod(checkinPeriodDays);
+  const timingValid = checkinPeriodError === null && gracePeriodError === null && !checkinPeriodUnsafe;
+
+  const canGoNext = [isAmountValid, beneficiariesValid, timingValid, guardiansValid, true][step];
 
   // Rows that are blank — the user will see a warning that they'll be dropped.
   const blankGuardianIndices = guardians
@@ -354,7 +357,17 @@ export default function NewWillPage() {
       setSubmitting(false);
       return;
     }
-    
+
+    // Block submission when the check-in period exceeds the contract's safe
+    // storage TTL window — on-chain data could be archived before the next check-in.
+    if (isUnsafeCheckinPeriod(checkinPeriodDays)) {
+      setError(
+        `Check-in period must be ${SAFE_CHECKIN_WINDOW_DAYS} days or fewer to avoid storage archival risk.`,
+      );
+      setSubmitting(false);
+      return;
+    }
+
     // Validate guardians before submission
     if (guardianTopError !== null) {
       setError('Please fix the guardian address errors before submitting.');
@@ -638,11 +651,15 @@ export default function NewWillPage() {
                   </p>
                 ) : null}
               </div>
-              {isUnsafeCheckinPeriod(checkinPeriodDays) && (
-                <div className="rounded-lg border border-amber-400/40 bg-amber-400/5 px-3 py-3" role="status">
+              {checkinPeriodUnsafe && (
+                <div
+                  className="rounded-lg border border-amber-400/40 bg-amber-400/5 px-3 py-3"
+                  role="alert"
+                  data-testid="checkin-period-warning"
+                >
                   <p className="text-xs font-medium text-amber-400">Storage archival risk</p>
                   <p className="mt-1 text-xs text-amber-400/90">
-                    This {checkinPeriodDays}-day check-in period exceeds the contract&apos;s storage safety window ({SAFE_CHECKIN_WINDOW_DAYS} days). Your will&apos;s on-chain data may be archived before your next check-in, making it inaccessible. Consider choosing a shorter period, or plan to check in more frequently.
+                    This {checkinPeriodDays}-day check-in period exceeds the contract&apos;s storage safety window ({SAFE_CHECKIN_WINDOW_DAYS} days). Your will&apos;s on-chain data may be archived before your next check-in, making it inaccessible. Choose a period of {SAFE_CHECKIN_WINDOW_DAYS} days or fewer to continue.
                   </p>
                 </div>
               )}
@@ -825,7 +842,7 @@ export default function NewWillPage() {
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={submitting || guardianTopError !== null}
+            disabled={submitting || guardianTopError !== null || checkinPeriodUnsafe}
             className="w-full rounded-full bg-will-purple px-5 py-2 text-sm font-medium text-white transition hover:bg-will-purple/90 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
           >
             {submitting ? 'Creating…' : 'Create Will'}
