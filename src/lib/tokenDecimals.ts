@@ -104,6 +104,9 @@ export function formatTokenBalance(
   /** Override decimals — used in tests and when decimals are already known. */
   decimalsOverride?: number,
 ): string {
+  if (decimalsOverride !== undefined && decimalsOverride < 0) {
+    throw new Error(`decimalsOverride must be non-negative, got ${decimalsOverride}`);
+  }
   const decimals = decimalsOverride ?? getTokenDecimals(tokenAddress);
   const raw = typeof balanceBaseUnits === 'bigint' ? balanceBaseUnits : BigInt(balanceBaseUnits);
 
