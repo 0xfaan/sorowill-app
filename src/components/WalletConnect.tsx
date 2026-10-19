@@ -2,7 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import { safeConnectWallet, safeGetPublicKey, truncateAddress } from '@/lib/freighter';
+import {
+  checkWalletPublicKey,
+  safeConnectWallet,
+  safeGetPublicKey,
+  truncateAddress,
+} from '@/lib/freighter';
 import { formatError } from '@/lib/errors';
 
 // TODO(#4): Replace this Freighter-only connect flow with a wallet-selection
@@ -26,6 +31,10 @@ const BROADCAST_CHANNEL_NAME = 'wallet_state';
 const CONNECTED_AT_KEY = 'sorowill:wallet-connected-at';
 export const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 export const SESSION_CHECK_INTERVAL_MS = 30_000;
+export const SESSION_CHECK_MAX_BACKOFF_MS = 5 * 60 * 1000;
+// Random spread added to each scheduled check so tabs opened together drift
+// apart; the first tab to fire then broadcasts its result and the rest defer.
+const SESSION_CHECK_JITTER_RATIO = 0.1;
 export const SESSION_EXPIRED_MESSAGE = 'Session expired. Please reconnect your wallet.';
 
 type ErrorType = 'not_installed' | 'user_declined' | 'session_expired' | 'generic';
@@ -65,6 +74,18 @@ function openWalletChannel(): BroadcastChannel | null {
     return null;
   }
   return new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+}
+
+/**
+ * Delay before the next wallet check. Doubles per consecutive failure, capped
+ * at SESSION_CHECK_MAX_BACKOFF_MS, so a wedged extension is not hammered.
+ */
+export function getSessionCheckDelay(failures: number, random: number = Math.random()): number {
+  const base = Math.min(
+    SESSION_CHECK_INTERVAL_MS * 2 ** Math.max(0, failures),
+    SESSION_CHECK_MAX_BACKOFF_MS,
+  );
+  return Math.round(base * (1 + SESSION_CHECK_JITTER_RATIO * random));
 }
 
 function isSessionCleared(): boolean {
@@ -150,25 +171,65 @@ export function WalletConnect() {
 
   // Re-validate the session while connected: expire it once it outlives
   // SESSION_MAX_AGE_MS or the wallet no longer reports the same account.
+  // Tabs share one Freighter wallet, so whichever tab checks first broadcasts
+  // the result and the others reuse it and push their own check back, rather
+  // than every tab polling on its own. Failed checks back off exponentially.
   useEffect(() => {
     if (!publicKey) return;
 
+    const channel = openWalletChannel();
     let cancelled = false;
+    let failures = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const schedule = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => void check(), getSessionCheckDelay(failures));
+    };
+
+    const applyResult = (current: string | null) => {
+      failures = 0;
+      if (current !== publicKey) {
+        expireSession();
+        return;
+      }
+      schedule();
+    };
+
     const check = async () => {
       if (isSessionExpired(getConnectedAt())) {
         expireSession();
         return;
       }
-      const current = await safeGetPublicKey();
-      if (!cancelled && isMounted.current && current !== publicKey) {
-        expireSession();
+      let current: string | null;
+      try {
+        current = await checkWalletPublicKey();
+      } catch {
+        if (cancelled) return;
+        failures += 1;
+        schedule();
+        return;
       }
+      if (cancelled || !isMounted.current) return;
+      channel?.postMessage({ type: 'session_checked', publicKey: current });
+      applyResult(current);
     };
-    const id = setInterval(() => void check(), SESSION_CHECK_INTERVAL_MS);
+
+    const handleMessage = (event: MessageEvent) => {
+      if (cancelled || event.data?.type !== 'session_checked') return;
+      applyResult(event.data.publicKey ?? null);
+    };
+
+    channel?.addEventListener('message', handleMessage);
+    schedule();
 
     return () => {
       cancelled = true;
-      clearInterval(id);
+      clearTimeout(timer);
+      if (channel) {
+        channel.removeEventListener('message', handleMessage);
+        channel.close();
+      }
     };
   }, [publicKey]);
 

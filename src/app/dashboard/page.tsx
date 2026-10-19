@@ -102,11 +102,16 @@ function DashboardPageOld() {
   >({});
 
   const isMounted = useRef(true);
+  // Controller for the in-flight loadWills request. A new load aborts the
+  // previous one, and unmount aborts whatever is still pending.
+  const loadWillsAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     isMounted.current = true;
     return () => {
       isMounted.current = false;
+      loadWillsAbortRef.current?.abort();
+      loadWillsAbortRef.current = null;
     };
   }, []);
 
@@ -121,6 +126,11 @@ function DashboardPageOld() {
   });
 
   const loadWills = useCallback(async (owner: string) => {
+    loadWillsAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadWillsAbortRef.current = controller;
+    const { signal } = controller;
+
     setLoading(true);
     setError(null);
     try {
@@ -137,10 +147,10 @@ function DashboardPageOld() {
       const [owned, inheriting, guardian] = await Promise.all([
         client.getWillsByOwner(owner),
         client.getWillsByBeneficiary(owner),
-        getWillsByGuardian(owner),
+        getWillsByGuardian(owner, undefined, signal),
       ]);
 
-      if (!isMounted.current) {
+      if (signal.aborted) {
         return;
       }
 
@@ -151,14 +161,17 @@ function DashboardPageOld() {
       setGuardianScanWarning(guardian.hasErrors);
       setLastFetchTime(new Date());
     } catch (err) {
-      if (!isMounted.current) {
+      if (signal.aborted) {
         return;
       }
       console.error('[Dashboard] Failed to load wills:', err);
       setError(formatLoadError(err));
     } finally {
-      if (isMounted.current) {
+      if (!signal.aborted) {
         setLoading(false);
+      }
+      if (loadWillsAbortRef.current === controller) {
+        loadWillsAbortRef.current = null;
       }
     }
   }, []);
