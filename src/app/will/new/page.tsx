@@ -17,10 +17,10 @@ import { GuardianForm } from '@/components/GuardianForm';
 import { validateGuardians } from '@/lib/guardianValidation';
 import { useStableRowIds } from '@/lib/useStableRowIds';
 import {
-  DRAFT_STORAGE_KEY,
   clearDraft,
   loadDraft,
   parsePeriodInput,
+  saveDraft,
   type FormStateDraft,
 } from '@/lib/draftValidation';
 import { useToast } from '@/components/Toast';
@@ -28,12 +28,26 @@ import { useToast } from '@/components/Toast';
 const CHECKIN_OPTIONS = [30, 60, 90, 180, 365];
 const GRACE_OPTIONS = [3, 7, 14];
 
-// The contract's persistent storage TTL is bumped to ~60 days' worth of ledgers on each write.
-// Check-in periods exceeding this window risk storage archival before the owner's next check-in.
+// Soroban persistent storage has a TTL measured in ledgers; when it runs out,
+// the entry is archived and must be restored before the contract can read it.
+// The SoroWill contract extends each will's TTL to ~60 days of ledgers
+// (~5 s per ledger, so ~1,036,800 ledgers) every time it writes the will,
+// e.g. on creation and on each check-in. That makes 60 days the longest gap
+// between check-ins that is guaranteed to stay within the live TTL.
+//
+// Trade-off: longer check-in periods are more convenient for the owner, but
+// past this window the will can be archived before the next check-in, and
+// restoring it costs an extra transaction and fee (and confuses anyone
+// looking it up in the meantime). A longer TTL bump would mean higher rent
+// paid up front on every write. So we still allow longer periods but warn
+// about them in the Timing step rather than blocking them.
+//
+// Keep this in sync with the contract's TTL extension constant if it changes.
+// State archival / TTL docs:
+// https://developers.stellar.org/docs/learn/encyclopedia/storage/state-archival
 const SAFE_CHECKIN_WINDOW_DAYS = 60;
 
 const STEP_LABELS = ['Amount', 'Beneficiaries', 'Timing', 'Guardians', 'Review'];
-const STORAGE_KEY = DRAFT_STORAGE_KEY;
 
 interface FormState {
   step: number;
@@ -205,7 +219,7 @@ export default function NewWillPage() {
       guardians,
     };
     if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      saveDraft(localStorage, state);
     }
   }, [step, token, amount, beneficiaries, checkinPeriodDays, gracePeriodDays, guardians]);
 

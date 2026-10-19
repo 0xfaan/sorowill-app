@@ -6,8 +6,27 @@ import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 import { registerReminderSubscription } from '@/lib/reminders';
 import { getSoroWillClient } from '@/lib/sorowill';
 
+// Per-IP budget for reminder registration. See `src/lib/rate-limit.ts` for the
+// algorithm and its limits.
+//
+// Threat model: this endpoint is unauthenticated until the signature check
+// below, and each accepted request writes a subscription and can trigger an
+// outbound email. Without a cap an attacker can:
+//   - flood it with junk payloads to burn CPU on `verifyMessage` and RPC
+//     quota on the `getWill` lookup (both run before we reject the request);
+//   - use it as an email cannon, registering many victim addresses against a
+//     will they own so the reminder service mails people who never opted in;
+//   - enumerate will IDs by watching for 404 vs. 401 responses.
+//
+// Why 10 per hour: a legitimate owner registers a reminder once per will,
+// and might retry a few times after a typo or wallet-signature rejection.
+// 10 leaves plenty of headroom for that (and for several people behind one
+// NAT/office IP) while capping an attacker at ~240 attempts/day per IP —
+// too slow to enumerate IDs or spam meaningfully. A one-hour window matches
+// how rarely the action is needed: a blocked user waits at most an hour, which
+// is acceptable for a set-and-forget setting.
 const IP_LIMIT = 10;
-const IP_WINDOW_MS = 60 * 60 * 1000;
+const IP_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
 export async function POST(request: Request) {
   const rate = checkRateLimit(`reminders:register:${getClientIp(request)}`, IP_LIMIT, IP_WINDOW_MS);
