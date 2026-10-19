@@ -68,6 +68,14 @@ export function clearTokenDecimalsCache(): void {
  * (defaults to the active network). Falls back to `DEFAULT_DECIMALS` (7) for
  * unrecognised tokens.
  */
+/**
+ * Network switches during in-flight requests: resolution is synchronous and
+ * every entry is keyed by network, so a caller that captured the old network
+ * before a switch still gets that network's (correct) decimals, while
+ * callers using the active network see the cache cleared on the first call
+ * after `getNetwork()` changes — even if the switch happened in another tab
+ * and `clearTokenDecimalsCache()` never ran here.
+ */
 export function getTokenDecimals(tokenAddress: string, network?: SoroWillNetwork): number {
   const activeNetwork = getNetwork();
   if (cachedForNetwork !== activeNetwork) {

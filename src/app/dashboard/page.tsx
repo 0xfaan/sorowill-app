@@ -101,14 +101,11 @@ function DashboardPageOld() {
     Record<string, { status: 'success' | 'error'; message: string; txHash?: string }>
   >({});
 
-  const isMounted = useRef(true);
+  // Each loadWills call owns an AbortController; starting a new load or
+  // unmounting aborts the previous one so stale results never hit state.
+  const loadControllerRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    isMounted.current = true;
-    return () => {
-      isMounted.current = false;
-    };
-  }, []);
+  useEffect(() => () => loadControllerRef.current?.abort(), []);
 
   const handleShortcutNewWill = useCallback(() => router.push('/will/new'), [router]);
   const handleShortcutSearch = useCallback(() => searchInputRef.current?.focus(), []);
@@ -121,6 +118,11 @@ function DashboardPageOld() {
   });
 
   const loadWills = useCallback(async (owner: string) => {
+    loadControllerRef.current?.abort();
+    const controller = new AbortController();
+    loadControllerRef.current = controller;
+    const { signal } = controller;
+
     setLoading(true);
     setError(null);
     try {
@@ -140,7 +142,7 @@ function DashboardPageOld() {
         getWillsByGuardian(owner),
       ]);
 
-      if (!isMounted.current) {
+      if (signal.aborted) {
         return;
       }
 
@@ -151,13 +153,13 @@ function DashboardPageOld() {
       setGuardianScanWarning(guardian.hasErrors);
       setLastFetchTime(new Date());
     } catch (err) {
-      if (!isMounted.current) {
+      if (signal.aborted) {
         return;
       }
       console.error('[Dashboard] Failed to load wills:', err);
       setError(formatLoadError(err));
     } finally {
-      if (isMounted.current) {
+      if (!signal.aborted) {
         setLoading(false);
       }
     }
@@ -204,8 +206,9 @@ function DashboardPageOld() {
   }, [publicKey, toast]);
 
   useEffect(() => {
+    const controller = new AbortController();
     void safeGetPublicKey().then((key) => {
-      if (!isMounted.current) {
+      if (controller.signal.aborted) {
         return;
       }
       setPublicKey(key);
@@ -215,6 +218,7 @@ function DashboardPageOld() {
         setLoading(false);
       }
     });
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
