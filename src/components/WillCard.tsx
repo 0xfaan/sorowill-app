@@ -1,5 +1,6 @@
 'use client';
 
+import { memo, useMemo } from 'react';
 import Link from 'next/link';
 
 import { calculateShares, formatUSDC, getTimeUntilCheckin, WillStatus, type Will } from '@sorowill/sdk';
@@ -18,7 +19,7 @@ export interface WillCardProps {
   showEntitledShare?: boolean;
 }
 
-export function WillCard({
+function WillCardComponent({
   will,
   onCheckIn,
   checkingIn = false,
@@ -43,7 +44,7 @@ export function WillCard({
   const graceDaysLeft = Math.ceil(graceSecondsLeft / 86_400);
 
   // Compute entitled share if enabled and connected address matches a beneficiary
-  const userShare = (() => {
+  const userShare = useMemo(() => {
     if (!showEntitledShare || !connectedAddress || !will.beneficiaries?.length) return null;
     try {
       const shares = calculateShares(will.balance, will.beneficiaries);
@@ -53,7 +54,7 @@ export function WillCard({
     } catch {
       return null;
     }
-  })();
+  }, [showEntitledShare, connectedAddress, will.balance, will.beneficiaries]);
 
   return (
     <article
@@ -124,3 +125,38 @@ export function WillCard({
     </article>
   );
 }
+
+function sameBeneficiaries(a: Will['beneficiaries'], b: Will['beneficiaries']): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((x, i) => x.address === b[i].address && x.percentage === b[i].percentage);
+}
+
+/**
+ * Compares the will by the fields the card actually renders rather than by
+ * reference, since the dashboard replaces will objects wholesale on every fetch.
+ */
+export function willCardPropsAreEqual(prev: WillCardProps, next: WillCardProps): boolean {
+  const a = prev.will;
+  const b = next.will;
+  const sameWill =
+    a === b ||
+    (a.id === b.id &&
+      a.status === b.status &&
+      a.balance === b.balance &&
+      a.gracePeriodDays === b.gracePeriodDays &&
+      a.checkinPeriodDays === b.checkinPeriodDays &&
+      a.lastCheckin?.getTime() === b.lastCheckin?.getTime() &&
+      a.triggerTime?.getTime() === b.triggerTime?.getTime() &&
+      sameBeneficiaries(a.beneficiaries, b.beneficiaries));
+
+  return (
+    sameWill &&
+    prev.onCheckIn === next.onCheckIn &&
+    prev.checkingIn === next.checkingIn &&
+    prev.connectedAddress === next.connectedAddress &&
+    prev.showEntitledShare === next.showEntitledShare
+  );
+}
+
+export const WillCard = memo(WillCardComponent, willCardPropsAreEqual);

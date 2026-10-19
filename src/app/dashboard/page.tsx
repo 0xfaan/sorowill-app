@@ -11,6 +11,7 @@ import { getSoroWillClient, getWillsByGuardian } from '@/lib/sorowill';
 import { getInvalidBatchAmounts, isValidAmount } from '@/lib/amount';
 import { formatError, formatLoadError } from '@/lib/errors';
 import { exportWillsToCSV } from '@/lib/willExport';
+import { withTimeout } from '@/lib/timeout';
 import { useToast } from '@/components/Toast';
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts';
 import { WillCard } from '@/components/WillCard';
@@ -135,9 +136,9 @@ function DashboardPageOld() {
 
       console.log('[Dashboard] Client initialized, fetching wills for:', owner);
       const [owned, inheriting, guardian] = await Promise.all([
-        client.getWillsByOwner(owner),
-        client.getWillsByBeneficiary(owner),
-        getWillsByGuardian(owner),
+        withTimeout(client.getWillsByOwner(owner), undefined, 'Loading owned wills'),
+        withTimeout(client.getWillsByBeneficiary(owner), undefined, 'Loading inherited wills'),
+        withTimeout(getWillsByGuardian(owner), undefined, 'Loading guardian wills'),
       ]);
 
       if (!isMounted.current) {
@@ -182,9 +183,9 @@ function DashboardPageOld() {
         return;
       }
       const [owned, inheriting, guardian] = await Promise.all([
-        client.getWillsByOwner(publicKey),
-        client.getWillsByBeneficiary(publicKey),
-        getWillsByGuardian(publicKey),
+        withTimeout(client.getWillsByOwner(publicKey), undefined, 'Loading owned wills'),
+        withTimeout(client.getWillsByBeneficiary(publicKey), undefined, 'Loading inherited wills'),
+        withTimeout(getWillsByGuardian(publicKey), undefined, 'Loading guardian wills'),
       ]);
       setOwnedWills(owned);
       setInheritingWills(inheriting);
@@ -223,7 +224,8 @@ function DashboardPageOld() {
     }
   }, [publicKey, loadWills]);
 
-  async function handleCheckIn(willId: string) {
+  // Stable identity so memoized WillCards don't re-render on every dashboard render.
+  const handleCheckIn = useCallback(async (willId: string) => {
     setCheckingInId(willId);
     try {
       await getSoroWillClient().checkIn(willId);
@@ -238,7 +240,7 @@ function DashboardPageOld() {
     } finally {
       setCheckingInId(null);
     }
-  }
+  }, [publicKey, loadWills, toast]);
 
   // Handle individual selection toggle
   function handleToggleSelectWill(willId: string) {

@@ -102,10 +102,12 @@ function getBeneficiaryValidationMessage(beneficiaries: Beneficiary[]): string |
 }
 
 export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
-  const total = sumPercentages(value);
-  const validationMessage = getBeneficiaryValidationMessage(value);
+  // Derived validation only depends on `value`; memoize so unrelated re-renders
+  // (e.g. resolution state changes) don't re-validate large beneficiary lists.
+  const total = useMemo(() => sumPercentages(value), [value]);
+  const validationMessage = useMemo(() => getBeneficiaryValidationMessage(value), [value]);
   const isValid = validationMessage === null;
-  const addressErrors = getAddressErrors(value);
+  const addressErrors = useMemo(() => getAddressErrors(value), [value]);
 
   const [beneficiaryIds, setBeneficiaryIds] = useState<Map<number, string>>(new Map());
 
