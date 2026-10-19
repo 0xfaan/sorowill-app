@@ -240,8 +240,13 @@ export default function WillDetailPage() {
       const { downloadWillCertificate } = await import('@/lib/certificate');
       const verifyUrl = `${window.location.origin}/verify/${will.id}`;
       await downloadWillCertificate(will, verifyUrl);
+      toast.success('Certificate downloaded');
     } catch (err) {
-      setError(formatError(err));
+      // CertificateExportError messages are our own user-facing copy.
+      const message =
+        err instanceof Error && err.name === 'CertificateExportError' ? err.message : formatError(err);
+      setError(message);
+      toast.error(`Certificate export failed: ${message}`);
     } finally {
       setExportingCertificate(false);
     }

@@ -2,6 +2,7 @@ import {
   connectWallet,
   getPublicKey,
   isFreighterInstalled,
+  type SoroWillNetwork,
   type WalletConnection,
 } from '@sorowill/sdk';
 
@@ -81,6 +82,18 @@ export async function safeGetWalletNetwork(): Promise<{
   } catch {
     return null;
   }
+}
+
+/** Maps Freighter network strings to SoroWill network identifiers. */
+export function normalizeWalletNetwork(network: string): SoroWillNetwork | null {
+  const lower = network.toLowerCase();
+  if (lower === 'testnet' || lower === 'test network' || lower.includes('test')) {
+    return 'testnet';
+  }
+  if (lower === 'mainnet' || lower === 'public' || lower.includes('main') || lower.includes('public')) {
+    return 'mainnet';
+  }
+  return null;
 }
 
 /**
