@@ -302,17 +302,6 @@ function DashboardPageOld() {
 
 
 
-  if (checkedWallet && !publicKey) {
-    return (
-      <div className="rounded-xl border border-white/10 bg-white/5 p-8 text-center">
-        <h1 className="text-xl font-semibold text-will-light">Connect your wallet</h1>
-        <p className="mt-2 text-sm text-will-light/60">
-          Connect Freighter to see the wills you own and the ones you&apos;re a beneficiary or guardian of.
-        </p>
-      </div>
-    );
-  }
-
   const baseList =
     tab === 'owned' ? ownedWills : tab === 'inheriting' ? inheritingWills : guardianWills;
 
@@ -330,6 +319,17 @@ function DashboardPageOld() {
   }, [activeList]);
 
   const isFiltering = search.trim() !== '' || statusFilter !== 'all';
+
+  if (checkedWallet && !publicKey) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-white/5 p-8 text-center">
+        <h1 className="text-xl font-semibold text-will-light">Connect your wallet</h1>
+        <p className="mt-2 text-sm text-will-light/60">
+          Connect Freighter to see the wills you own and the ones you&apos;re a beneficiary or guardian of.
+        </p>
+      </div>
+    );
+  }
 
   // getWillsByGuardian returns every will the address is listed on, including
   // Cancelled/Released ones. Only wills still in force (Active or in their
