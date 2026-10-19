@@ -76,6 +76,14 @@ curl -X POST https://your-app.example.com/api/reminders/dispatch
 
 The dispatch route computes reminder windows from each will's `lastCheckin` and `checkinPeriodDays`, sending a well-before reminder once and an imminent reminder once for each active will that still has time left. The route is protected by a `CRON_SECRET` bearer token when configured, and Vercel cron plus GitHub Actions can both invoke it.
 
+## Key Management & Account Recovery
+
+SoroWill does **not** generate, store, or derive any private keys or seed phrases. All signing and key custody is handled entirely by your connected wallet — currently **[Freighter](https://freighter.app/)**. SoroWill only reads the wallet's public address and submits transactions for the wallet to sign; private key material never passes through this app.
+
+The "Certificate" / vault PDF export (available from a will's detail page) only contains the will's **public on-chain data** — id, owner, status, balance, and beneficiaries — plus a QR code for quick verification. It contains no key material and **cannot** be used to recover wallet access.
+
+If you lose access to your wallet, SoroWill cannot help you recover it. Use your wallet provider's own recovery process (for Freighter, this means restoring from your backed-up seed phrase — see Freighter's documentation at [freighter.app](https://freighter.app/)).
+
 ## Contributing via Drips Wave
 
 This repo participates in the **Stellar Wave Program** on [Drips](https://drips.network/wave). Maintainer-tagged issues carry Point values, and contributors who resolve them during an active Wave earn a proportional share of that Wave's reward pool. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution workflow, and <https://drips.network/wave> for how Wave itself works.
