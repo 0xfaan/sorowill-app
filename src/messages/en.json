@@ -22,10 +22,14 @@
     "back": "Back",
     "next": "Next",
     "loading": "Loading…",
+    "overdue": "Overdue",
     "error": "Error",
     "noWillsMatch": "No wills match your search or filter.",
     "allStatuses": "All statuses",
-    "clipboardError": "Could not copy to clipboard. Check your browser permissions."
+    "clipboardError": "Could not copy to clipboard. Check your browser permissions.",
+    "copyToClipboard": "Copy to clipboard",
+    "copied": "Copied!",
+    "copyAddress": "Copy {address}"
   },
   "landing": {
     "heroTitle": "Protect your crypto legacy",

@@ -139,12 +139,18 @@ export function WalletConnect() {
       return;
     }
     void safeGetPublicKey().then((key) => {
-      if (isMounted.current) {
-        if (key && getConnectedAt() === null) {
-          setConnectedAt(Date.now());
-        }
-        setPublicKey(key);
+      if (!isMounted.current) return;
+      if (!key) {
+        // No valid key from the wallet: treat as disconnected rather than
+        // rendering an empty/invalid address.
+        setConnectedAt(null);
+        setPublicKey(null);
+        return;
       }
+      if (getConnectedAt() === null) {
+        setConnectedAt(Date.now());
+      }
+      setPublicKey(key);
     });
   }, []);
 
@@ -160,7 +166,7 @@ export function WalletConnect() {
         return;
       }
       const current = await safeGetPublicKey();
-      if (!cancelled && isMounted.current && current !== publicKey) {
+      if (!cancelled && isMounted.current && (!current || current !== publicKey)) {
         expireSession();
       }
     };
@@ -204,6 +210,9 @@ export function WalletConnect() {
     setSessionCleared(false);
     try {
       const connection = await safeConnectWallet();
+      if (!connection.publicKey) {
+        throw new Error('Wallet did not return a public key');
+      }
       setConnectedAt(Date.now());
       setPublicKey(connection.publicKey);
 

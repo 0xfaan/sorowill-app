@@ -193,7 +193,9 @@ export default function NewWillPage() {
 
   const tokenValid = CONTRACT_ADDRESS_PATTERN.test(token.trim());
   const showTokenError = token.trim() !== '' && !tokenValid;
-  const isAmountValid = isValidAmount(amount) && tokenValid;
+  const isAmountZero = amount.trim() !== '' && Number(amount) === 0;
+  const showAmountError = amount.trim() !== '' && (isAmountZero || !isValidAmount(amount));
+  const isAmountValid = isValidAmount(amount) && !isAmountZero && tokenValid;
   useEffect(() => {
     const state: FormState = {
       step,
@@ -352,6 +354,12 @@ export default function NewWillPage() {
   async function handleSubmit() {
     setSubmitting(true);
     setError(null);
+    // Defense-in-depth: never submit a zero (or otherwise invalid) amount.
+    if (!isValidAmount(amount) || Number(amount) === 0) {
+      setError('Amount must be greater than zero.');
+      setSubmitting(false);
+      return;
+    }
     if (!Number.isInteger(checkinPeriodDays) || checkinPeriodDays <= 0 || !Number.isInteger(gracePeriodDays) || gracePeriodDays <= 0) {
       setError('Check-in and grace periods must be positive whole numbers.');
       setSubmitting(false);
@@ -573,8 +581,9 @@ export default function NewWillPage() {
                     }
                   }}
                   placeholder="1000.00"
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none"
-                  aria-describedby="amount-help"
+                  className={`w-full rounded-lg border bg-white/5 px-3 py-2 text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none ${showAmountError ? 'border-red-400' : 'border-white/10'}`}
+                  aria-describedby={showAmountError ? 'amount-help amount-error' : 'amount-help'}
+                  aria-invalid={showAmountError}
                 />
                 {walletBalance && (
                   <button
@@ -586,6 +595,13 @@ export default function NewWillPage() {
                   </button>
                 )}
               </div>
+              {showAmountError ? (
+                <p id="amount-error" role="alert" className="mt-1 text-xs text-red-400">
+                  {isAmountZero
+                    ? 'Amount must be greater than zero.'
+                    : 'Please enter a valid amount greater than zero.'}
+                </p>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -842,7 +858,7 @@ export default function NewWillPage() {
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={submitting || guardianTopError !== null || checkinPeriodUnsafe}
+            disabled={submitting || guardianTopError !== null || !isAmountValid}
             className="w-full rounded-full bg-will-purple px-5 py-2 text-sm font-medium text-white transition hover:bg-will-purple/90 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
           >
             {submitting ? 'Creating…' : 'Create Will'}

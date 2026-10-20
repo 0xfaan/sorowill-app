@@ -59,7 +59,7 @@ npm run dev
 | `KV_REST_API_URL` | Vercel KV / Upstash Redis REST URL used to persist reminder subscriptions (required for reminders; the serverless filesystem is ephemeral) |
 | `KV_REST_API_TOKEN` | REST token for the KV store above |
 | `REMINDER_STORE_KV_KEY` | Optional key used to store the reminder blob in the KV store (defaults to `sorowill:reminder-store`) |
-| `CRON_SECRET` | Bearer token for authenticating automated reminder dispatch requests from GitHub Actions (required if using the automated GitHub Actions trigger; see [Reminder delivery](#reminder-delivery)) |
+| `CRON_SECRET` | Bearer token for authenticating automated reminder dispatch requests from GitHub Actions (required if using the automated GitHub Actions trigger; see [Reminder delivery](#reminder-delivery)). **Must be at least 32 random characters** (e.g. `openssl rand -hex 32`); shorter secrets are rejected with a warning because they weaken the timing-safe comparison. |
 | `NEXT_PUBLIC_APP_URL` | Optional public base URL used to build the unsubscribe link in reminder emails (defaults to `VERCEL_URL` or `http://localhost:3000`) |
 
 ## Design Tokens
@@ -180,7 +180,8 @@ To enable reminder delivery via GitHub Actions, set the following **repository s
 
 2. **`CRON_SECRET`** — A secure bearer token that authenticates cron requests to the dispatch endpoint
    - This token is passed in the `Authorization: Bearer` header
-   - Can be any arbitrary string; treat it as a password
+   - **Must be at least 32 random characters** (e.g. generate with `openssl rand -hex 32`); treat it as a password
+   - Shorter secrets are rejected with a warning, since low-entropy values weaken the timing-safe comparison
    - The API route validates this against the `CRON_SECRET` environment variable
 
 **Configuration Steps:**
@@ -191,7 +192,7 @@ To enable reminder delivery via GitHub Actions, set the following **repository s
    - Value: Your app's dispatch endpoint URL (e.g., `https://your-deployment.vercel.app/api/reminders/dispatch`)
 3. Create another **New repository secret**:
    - Name: `CRON_SECRET`
-   - Value: A random string to serve as the bearer token (e.g., generate with `openssl rand -hex 32`)
+   - Value: A random string of **at least 32 characters** to serve as the bearer token (e.g., generate with `openssl rand -hex 32`). Shorter secrets are rejected with a warning because they weaken the timing-safe comparison.
 4. Ensure your deployment has the corresponding `CRON_SECRET` environment variable set (see [Environment Variables](#environment-variables))
 
 #### Manual Dispatch

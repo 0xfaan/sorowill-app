@@ -10,6 +10,14 @@ import { getSoroWillClient } from '@/lib/sorowill';
 const IP_LIMIT = 10;
 const IP_WINDOW_MS = 60 * 60 * 1000;
 
+const EMAIL_MAX_LENGTH = 254;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isValidEmail(email: string): boolean {
+  if (email.length > EMAIL_MAX_LENGTH) return false;
+  return EMAIL_REGEX.test(email);
+}
+
 export async function POST(request: Request) {
   const rate = checkRateLimit(`reminders:register:${getClientIp(request)}`, IP_LIMIT, IP_WINDOW_MS);
   if (!rate.allowed) {
@@ -36,9 +44,9 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!isValidContractAddress(willId)) {
+    if (!isValidEmail(email)) {
       return NextResponse.json(
-        { ok: false, error: 'Invalid willId format' },
+        { ok: false, error: 'Invalid email format' },
         { status: 400 },
       );
     }
