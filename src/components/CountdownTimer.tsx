@@ -107,9 +107,16 @@ export function CountdownTimer({ deadline, label }: CountdownTimerProps) {
 
   const pad = (value: number) => value.toString().padStart(2, '0');
 
+  const remainingDescription = describeRemaining(overdue, days, hours, minutes);
+  const accessibleName = label ? `${label}: ${remainingDescription}` : remainingDescription;
+
   return (
     <div className="flex flex-col gap-1">
-      {label ? <span className="text-xs uppercase tracking-wide text-will-light/60">{label}</span> : null}
+      {label ? (
+        <span aria-hidden="true" className="text-xs uppercase tracking-wide text-will-light/60">
+          {label}
+        </span>
+      ) : null}
       <span
         role="timer"
         aria-label={describeRemaining(t('overdue'), overdue, days, hours, minutes)}

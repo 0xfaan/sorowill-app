@@ -26,7 +26,10 @@
     "error": "Error",
     "noWillsMatch": "Ningún testamento coincide con tu búsqueda o filtro.",
     "allStatuses": "Todos los estados",
-    "clipboardError": "No se pudo copiar al portapapeles. Verifica los permisos de tu navegador."
+    "clipboardError": "No se pudo copiar al portapapeles. Verifica los permisos de tu navegador.",
+    "copyToClipboard": "Copiar al portapapeles",
+    "copied": "¡Copiado!",
+    "copyAddress": "Copiar {address}"
   },
   "landing": {
     "heroTitle": "Protege tu herencia criptográfica",
