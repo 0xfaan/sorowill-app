@@ -281,6 +281,7 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
                 <input
                   id={`beneficiary-address-${index}`}
                   type="text"
+                  aria-label={`Beneficiary ${index + 1} address`}
                   placeholder="Stellar address (G...) or federated address (name*domain.com)"
                   value={beneficiary.address}
                   onChange={(event) => updateRow(index, { address: event.target.value })}
@@ -309,6 +310,7 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
                   <input
                     id={`beneficiary-percentage-${index}`}
                     type="number"
+                    aria-label={`Beneficiary ${index + 1} percentage`}
                     min={0}
                     max={100}
                     step={0.01}
