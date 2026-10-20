@@ -188,9 +188,9 @@ function DashboardPageOld() {
         return;
       }
       const [owned, inheriting, guardian] = await Promise.all([
-        client.getWillsByOwner(publicKey),
-        client.getWillsByBeneficiary(publicKey),
-        getWillsByGuardian(publicKey),
+        withTimeout(client.getWillsByOwner(publicKey), undefined, 'Loading owned wills'),
+        withTimeout(client.getWillsByBeneficiary(publicKey), undefined, 'Loading inherited wills'),
+        withTimeout(getWillsByGuardian(publicKey), undefined, 'Loading guardian wills'),
       ]);
       setOwnedWills(owned);
       setInheritingWills(inheriting);
@@ -231,7 +231,8 @@ function DashboardPageOld() {
     }
   }, [publicKey, loadWills]);
 
-  async function handleCheckIn(willId: string) {
+  // Stable identity so memoized WillCards don't re-render on every dashboard render.
+  const handleCheckIn = useCallback(async (willId: string) => {
     setCheckingInId(willId);
     try {
       await getSoroWillClient().checkIn(willId);
@@ -251,7 +252,7 @@ function DashboardPageOld() {
     } finally {
       setCheckingInId(null);
     }
-  }
+  }, [publicKey, loadWills, toast]);
 
   // Handle individual selection toggle
   function handleToggleSelectWill(willId: string) {
