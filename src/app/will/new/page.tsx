@@ -16,6 +16,7 @@ import { GUARDIAN_THRESHOLD, MAX_GUARDIANS } from '@/lib/constants';
 import { formatError, classifyCloneError, type CloneErrorKind } from '@/lib/errors';
 import { isFederatedAddress, resolveFederatedAddress } from '@/lib/federated';
 import { getUserBalance } from '@/lib/balance';
+import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { isValidAmount } from '@/lib/amount';
 import { BeneficiaryForm } from '@/components/BeneficiaryForm';
 import { GuardianForm } from '@/components/GuardianForm';
@@ -124,6 +125,9 @@ export default function NewWillPage() {
 
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
+  // Re-check the balance only once typing in the amount field settles, so a
+  // burst of keystrokes costs one Horizon request instead of one per key.
+  const debouncedAmount = useDebouncedValue(amount, BALANCE_CHECK_DEBOUNCE_MS);
 
   const [ownerAddress, setOwnerAddress] = useState<string | null>(null);
 
@@ -175,6 +179,25 @@ export default function NewWillPage() {
 
     void fetchBalance();
   }, []);
+
+  useEffect(() => {
+    if (!ownerAddress || debouncedAmount === '') return;
+
+    // Abort a still-pending check when the amount changes again or on unmount
+    // so a slow, stale response can't overwrite a newer one.
+    const controller = new AbortController();
+    setLoadingBalance(true);
+    void getUserBalance(ownerAddress, controller.signal).then((balance) => {
+      if (controller.signal.aborted) return;
+      setWalletBalance(balance);
+      setLoadingBalance(false);
+    });
+
+    return () => {
+      controller.abort();
+      setLoadingBalance(false);
+    };
+  }, [ownerAddress, debouncedAmount]);
 
   // Clear the draft when the wallet disconnects so stale state is never
   // re-loaded by a different account in the same browser session.

@@ -57,6 +57,28 @@ export async function safeGetPublicKey(): Promise<string | null> {
   }
 }
 
+const NO_ACCOUNT_MESSAGE = 'No Freighter account is connected';
+
+/**
+ * Like `safeGetPublicKey`, but only resolves `null` when Freighter reports
+ * that no account is connected. Any other failure (extension not responding,
+ * transient messaging errors) is rethrown so callers polling the wallet can
+ * back off and retry instead of treating it as a disconnect.
+ */
+export async function checkWalletPublicKey(): Promise<string | null> {
+  if (!isBrowser) {
+    return null;
+  }
+  try {
+    return await getPublicKey();
+  } catch (err) {
+    if (err instanceof Error && err.message.includes(NO_ACCOUNT_MESSAGE)) {
+      return null;
+    }
+    throw err;
+  }
+}
+
 /**
  * SSR-safe wrapper around the Freighter API's `getNetwork`. Resolves
  * with the wallet's currently selected network and passphrase, or null

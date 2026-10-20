@@ -140,7 +140,7 @@ function DashboardPageOld() {
       const [owned, inheriting, guardian] = await Promise.all([
         client.getWillsByOwner(owner),
         client.getWillsByBeneficiary(owner),
-        getWillsByGuardian(owner),
+        getWillsByGuardian(owner, undefined, signal),
       ]);
 
       if (signal.aborted) {
@@ -162,6 +162,9 @@ function DashboardPageOld() {
     } finally {
       if (!signal.aborted) {
         setLoading(false);
+      }
+      if (loadWillsAbortRef.current === controller) {
+        loadWillsAbortRef.current = null;
       }
     }
   }, []);
