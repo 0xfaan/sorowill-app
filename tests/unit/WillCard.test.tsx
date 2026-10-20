@@ -87,4 +87,21 @@ describe('WillCard', () => {
     render(<WillCard will={makeWill()} />);
     expect(screen.getByText('Check-in due in 5 days')).toBeInTheDocument();
   });
+
+  it('exposes beneficiaries as a semantic list with correct length', () => {
+    render(
+      <WillCard
+        will={makeWill({
+          beneficiaries: [
+            { address: 'GBENEF1', percentage: 50 },
+            { address: 'GBENEF2', percentage: 30 },
+            { address: 'GBENEF3', percentage: 20 },
+          ],
+        })}
+      />,
+    );
+    const list = screen.getByRole('list', { name: /beneficiaries/i });
+    expect(list).toBeInTheDocument();
+    expect(screen.getAllByRole('listitem')).toHaveLength(3);
+  });
 });

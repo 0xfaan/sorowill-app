@@ -9,8 +9,9 @@ import { WillStatus, type Will, formatUSDC, toStroops } from '@sorowill/sdk';
 import { safeGetPublicKey } from '@/lib/freighter';
 import { getSoroWillClient, getWillsByGuardian } from '@/lib/sorowill';
 import { getInvalidBatchAmounts, isValidAmount } from '@/lib/amount';
-import { formatError, formatLoadError } from '@/lib/errors';
+import { formatError, formatLoadError, classifyCheckInError } from '@/lib/errors';
 import { exportWillsToCSV } from '@/lib/willExport';
+import { getSafeBalance } from '@/lib/tokenDecimals';
 import { useToast } from '@/components/Toast';
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts';
 import { WillCard } from '@/components/WillCard';
@@ -101,19 +102,11 @@ function DashboardPageOld() {
     Record<string, { status: 'success' | 'error'; message: string; txHash?: string }>
   >({});
 
-  const isMounted = useRef(true);
-  // Controller for the in-flight loadWills request. A new load aborts the
-  // previous one, and unmount aborts whatever is still pending.
-  const loadWillsAbortRef = useRef<AbortController | null>(null);
+  // Each loadWills call owns an AbortController; starting a new load or
+  // unmounting aborts the previous one so stale results never hit state.
+  const loadControllerRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    isMounted.current = true;
-    return () => {
-      isMounted.current = false;
-      loadWillsAbortRef.current?.abort();
-      loadWillsAbortRef.current = null;
-    };
-  }, []);
+  useEffect(() => () => loadControllerRef.current?.abort(), []);
 
   const handleShortcutNewWill = useCallback(() => router.push('/will/new'), [router]);
   const handleShortcutSearch = useCallback(() => searchInputRef.current?.focus(), []);
@@ -126,9 +119,9 @@ function DashboardPageOld() {
   });
 
   const loadWills = useCallback(async (owner: string) => {
-    loadWillsAbortRef.current?.abort();
+    loadControllerRef.current?.abort();
     const controller = new AbortController();
-    loadWillsAbortRef.current = controller;
+    loadControllerRef.current = controller;
     const { signal } = controller;
 
     setLoading(true);
@@ -217,8 +210,9 @@ function DashboardPageOld() {
   }, [publicKey, toast]);
 
   useEffect(() => {
+    const controller = new AbortController();
     void safeGetPublicKey().then((key) => {
-      if (!isMounted.current) {
+      if (controller.signal.aborted) {
         return;
       }
       setPublicKey(key);
@@ -228,6 +222,7 @@ function DashboardPageOld() {
         setLoading(false);
       }
     });
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -245,9 +240,14 @@ function DashboardPageOld() {
       }
       toast.success('Check-in successful');
     } catch (err) {
-      const message = formatError(err);
-      setError(message);
-      toast.error(message);
+      const { kind, message } = classifyCheckInError(err);
+      const displayMessage =
+        kind === 'network'
+          ? 'Network error — check your connection and try again'
+          : `Check-in rejected by the contract: ${message}`;
+      console.error(`[Dashboard] Check-in failed (${kind}):`, err);
+      setError(displayMessage);
+      toast.error(displayMessage);
     } finally {
       setCheckingInId(null);
     }
@@ -315,6 +315,30 @@ function DashboardPageOld() {
 
 
 
+  const baseList =
+    tab === 'owned' ? ownedWills : tab === 'inheriting' ? inheritingWills : guardianWills;
+
+  const activeList = filterWills(baseList, search, statusFilter);
+
+  const handleExportCSV = useCallback(() => {
+    let csv: string;
+    try {
+      csv = exportWillsToCSV(activeList);
+    } catch (error) {
+      toast.error(formatError(error));
+      return;
+    }
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `sorowill-wills-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [activeList, toast]);
+
+  const isFiltering = search.trim() !== '' || statusFilter !== 'all';
+
   if (checkedWallet && !publicKey) {
     return (
       <div className="rounded-xl border border-white/10 bg-white/5 p-8 text-center">
@@ -325,24 +349,6 @@ function DashboardPageOld() {
       </div>
     );
   }
-
-  const baseList =
-    tab === 'owned' ? ownedWills : tab === 'inheriting' ? inheritingWills : guardianWills;
-
-  const activeList = filterWills(baseList, search, statusFilter);
-
-  const handleExportCSV = useCallback(() => {
-    const csv = exportWillsToCSV(activeList);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `sorowill-wills-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-  }, [activeList]);
-
-  const isFiltering = search.trim() !== '' || statusFilter !== 'all';
 
   // getWillsByGuardian returns every will the address is listed on, including
   // Cancelled/Released ones. Only wills still in force (Active or in their
@@ -594,7 +600,7 @@ function DashboardPageOld() {
                   <div className="min-w-0">
                     <span className="font-semibold text-sm text-will-light">Will #{willId}</span>
                     <span className="text-xs text-will-light/50 block">
-                      Current balance: {will ? formatUSDC(BigInt(will.balance)) : '0.00'} USDC
+                      Current balance: {will ? formatUSDC(getSafeBalance(will.balance)) : '0.00'} USDC
                     </span>
                   </div>
 

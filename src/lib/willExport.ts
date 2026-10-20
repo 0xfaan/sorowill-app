@@ -2,6 +2,27 @@ import { type Will } from '@sorowill/sdk';
 
 import { formatTokenBalance } from '@/lib/tokenDecimals';
 
+function isValidBeneficiaryAddress(address: unknown): boolean {
+  return typeof address === 'string' && address.trim().length > 0;
+}
+
+/**
+ * Validates that every will's beneficiaries have a non-empty address before
+ * they are written into the CSV export. An empty address would otherwise
+ * silently drop a field and shift/corrupt the CSV row.
+ */
+export function validateBeneficiariesForExport(wills: Will[]): void {
+  wills.forEach((will) => {
+    const beneficiaries = Array.isArray(will.beneficiaries) ? will.beneficiaries : [];
+    beneficiaries.forEach((b) => {
+      const address = typeof b === 'string' ? b : (b as { address?: unknown })?.address;
+      if (!isValidBeneficiaryAddress(address)) {
+        throw new Error(`Will ${will.id ?? '<unknown>'} has a beneficiary with an invalid or empty address`);
+      }
+    });
+  });
+}
+
 function escapeCSVField(val: string | number | bigint | null | undefined): string {
   if (val === null || val === undefined) {
     return '';
@@ -13,7 +34,27 @@ function escapeCSVField(val: string | number | bigint | null | undefined): strin
   return str;
 }
 
+/**
+ * Formats a will's balance for CSV export. A zero or missing balance is always
+ * written as `0` regardless of how it is represented (`0n`, `'0'`, `''`),
+ * rather than sometimes `0` and sometimes `0.0000000` (#699). A malformed
+ * balance is written as an empty cell instead of aborting the whole export.
+ */
+function formatExportBalance(balance: Will['balance'] | null | undefined, token: string): string {
+  if (balance === null || balance === undefined || balance === '') return '0';
+  let raw: bigint;
+  try {
+    raw = BigInt(balance);
+  } catch {
+    return '';
+  }
+  if (raw === 0n) return '0';
+  return formatTokenBalance(raw, token);
+}
+
 export function exportWillsToCSV(wills: Will[]): string {
+  validateBeneficiariesForExport(wills);
+
   const headers = [
     'Will ID',
     'Owner',
@@ -27,7 +68,7 @@ export function exportWillsToCSV(wills: Will[]): string {
   ];
 
   const rows = wills.map((will) => {
-    const formattedBalance = will.balance ? formatTokenBalance(will.balance, will.token) : '0';
+    const formattedBalance = formatExportBalance(will.balance, will.token);
 
     const beneficiariesStr = (Array.isArray(will.beneficiaries) ? will.beneficiaries : [])
       .map((b) => (typeof b === 'string' ? b : (b as { address?: string })?.address || ''))

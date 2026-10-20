@@ -17,7 +17,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 import { BeneficiaryForm } from '@/components/BeneficiaryForm';
 import type { Beneficiary } from '@sorowill/sdk';
-import { resolveFederatedAddress } from '@/lib/federated';
+import { isFederatedAddress, resolveFederatedAddress } from '@/lib/federated';
 
 // ---------------------------------------------------------------------------
 // Mock @/lib/federated so tests don't need network access
@@ -128,15 +128,11 @@ describe('BeneficiaryForm — shows error for unresolved federated address (#258
 //    full page, asserting the logic that drives canGoNext.
 // ---------------------------------------------------------------------------
 describe('beneficiariesValid predicate logic (#258)', () => {
-  const { isFederatedAddress } = vi.importMock<typeof import('@/lib/federated')>(
-    '@/lib/federated',
-  ) as unknown as { isFederatedAddress: (a: string) => boolean };
-
   it('a beneficiary with a federated address is flagged as not-ready', () => {
     // The check used in will/new/page.tsx:
     //   beneficiaries.every((b) => !isFederatedAddress(b.address))
     const beneficiaries: Beneficiary[] = [{ address: 'alice*domain.com', percentage: 100 }];
-    const allResolved = beneficiaries.every((b) => !b.address.includes('*'));
+    const allResolved = beneficiaries.every((b) => !isFederatedAddress(b.address));
     expect(allResolved).toBe(false);
   });
 
@@ -144,7 +140,67 @@ describe('beneficiariesValid predicate logic (#258)', () => {
     const beneficiaries: Beneficiary[] = [
       { address: RESOLVED_STELLAR_ADDRESS, percentage: 100 },
     ];
-    const allResolved = beneficiaries.every((b) => !b.address.includes('*'));
+    const allResolved = beneficiaries.every((b) => !isFederatedAddress(b.address));
     expect(allResolved).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. Submit is blocked while a federated address is unresolved (#661)
+// ---------------------------------------------------------------------------
+describe('BeneficiaryForm — submit blocked for unresolved federated address (#661)', () => {
+  it('shows the "must be resolved" error and blocks submit for name*domain', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const beneficiaries: Beneficiary[] = [{ address: 'alice*domain.com', percentage: 100 }];
+
+    render(
+      <BeneficiaryForm value={beneficiaries} onChange={vi.fn()} onSubmit={onSubmit} />,
+    );
+
+    // Per-row error is visible.
+    expect(
+      screen.getByText(/federated address must be resolved before submitting/i),
+    ).toBeInTheDocument();
+
+    // Submit button is disabled while the address is unresolved.
+    const submitButton = screen.getByRole('button', { name: /submit|next/i });
+    expect(submitButton).toBeDisabled();
+
+    // Attempting to click must not trigger submission.
+    await user.click(submitButton);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('clears the error and allows submit after resolution to a G... address', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const onSubmit = vi.fn();
+    const beneficiaries: Beneficiary[] = [{ address: 'alice*domain.com', percentage: 100 }];
+    vi.mocked(resolveFederatedAddress).mockResolvedValue(RESOLVED_STELLAR_ADDRESS);
+
+    const { rerender } = render(
+      <BeneficiaryForm value={beneficiaries} onChange={onChange} onSubmit={onSubmit} />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Resolve' }));
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+
+    // Simulate the parent applying the resolved address.
+    const resolved: Beneficiary[] = [
+      { address: RESOLVED_STELLAR_ADDRESS, percentage: 100 },
+    ];
+    rerender(<BeneficiaryForm value={resolved} onChange={onChange} onSubmit={onSubmit} />);
+
+    // Error is gone.
+    expect(
+      screen.queryByText(/federated address must be resolved before submitting/i),
+    ).not.toBeInTheDocument();
+
+    // Submit is now enabled and triggers onSubmit.
+    const submitButton = screen.getByRole('button', { name: /submit|next/i });
+    expect(submitButton).toBeEnabled();
+    await user.click(submitButton);
+    expect(onSubmit).toHaveBeenCalled();
   });
 });

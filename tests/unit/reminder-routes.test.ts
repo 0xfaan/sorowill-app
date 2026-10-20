@@ -6,9 +6,11 @@ vi.mock('@/lib/reminders', () => ({
   unsubscribeReminderSubscription: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
+const getWillMock = vi.fn().mockResolvedValue({ id: '1' });
+
 vi.mock('@/lib/sorowill', () => ({
   getSoroWillClient: () => ({
-    getWill: vi.fn().mockResolvedValue({ id: '1' }),
+    getWill: getWillMock,
   }),
 }));
 
@@ -19,6 +21,8 @@ vi.mock('viem', () => ({
 import { POST as registerRoute } from '@/app/api/reminders/register/route';
 import { GET as confirmRoute } from '@/app/api/reminders/confirm/route';
 import { GET as unsubscribeGetRoute } from '@/app/api/reminders/unsubscribe/route';
+
+const VALID_WILL_ID = 'C' + 'A'.repeat(55);
 
 describe('reminder routes', () => {
   beforeEach(() => {
@@ -41,7 +45,7 @@ describe('reminder routes', () => {
       new Request('http://localhost/api/reminders/register', {
         method: 'POST',
         body: JSON.stringify({
-          willId: '1',
+          willId: VALID_WILL_ID,
           email: 'a@example.com',
           owner: '0xabc',
           signature: '0xsig',
@@ -51,6 +55,28 @@ describe('reminder routes', () => {
       }),
     );
     expect(response.status).toBe(200);
+  });
+
+  it.each([
+    ['empty', ''],
+    ['wrong length', 'C' + 'A'.repeat(54)],
+    ['invalid characters', 'C' + '!'.repeat(55)],
+  ])('rejects %s willId format', async (_label, willId) => {
+    const response = await registerRoute(
+      new Request('http://localhost/api/reminders/register', {
+        method: 'POST',
+        body: JSON.stringify({
+          willId,
+          email: 'a@example.com',
+          owner: '0xabc',
+          signature: '0xsig',
+          message: 'hello',
+        }),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(getWillMock).not.toHaveBeenCalled();
   });
 
   it('confirms and unsubscribes valid tokens', async () => {

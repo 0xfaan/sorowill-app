@@ -5,6 +5,29 @@ import { dispatchDueReminders } from '@/lib/reminders/dispatch';
 export const dynamic = 'force-dynamic';
 
 /**
+ * Minimum recommended length for CRON_SECRET.
+ *
+ * A short secret has low entropy, so even a timing-safe comparison offers
+ * little protection against brute-force guessing. 32 characters of random
+ * data provides ~192 bits of entropy when drawn from a 62-char alphabet.
+ */
+const MIN_CRON_SECRET_LENGTH = 32;
+
+/**
+ * Warn (once per invocation) when the configured secret is too short.
+ * Weak secrets undermine the timing-safe comparison below.
+ */
+function warnIfSecretTooShort(secret: string): void {
+  if (secret.length < MIN_CRON_SECRET_LENGTH) {
+    console.warn(
+      `[reminders/dispatch] CRON_SECRET is only ${secret.length} characters long; ` +
+        `a weak secret undermines the timing-safe comparison. ` +
+        `Use at least ${MIN_CRON_SECRET_LENGTH} random characters (e.g. \`openssl rand -hex 32\`).`,
+    );
+  }
+}
+
+/**
  * Constant-time comparison of two strings.
  *
  * V8's `===`/`!==` short-circuits on the first mismatched byte, which leaks
@@ -30,6 +53,8 @@ async function handleDispatch(request: Request) {
     );
   }
 
+  warnIfSecretTooShort(expectedToken);
+
   const authHeader = request.headers.get('authorization') ?? '';
   const expectedHeader = `Bearer ${expectedToken}`;
 
@@ -53,6 +78,8 @@ export async function GET(request: Request) {
       { status: 500 },
     );
   }
+
+  warnIfSecretTooShort(expectedToken);
 
   const authHeader = request.headers.get('authorization') ?? '';
   const expectedHeader = `Bearer ${expectedToken}`;
