@@ -1,3 +1,33 @@
+/**
+ * Server-side helpers for building page metadata (`<title>`, description,
+ * Open Graph / Twitter link previews) for will pages.
+ *
+ * "Metadata" here means the Next.js `Metadata` object returned from a route's
+ * `generateMetadata` export, not anything stored on-chain. It is what search
+ * engines and chat apps show when someone shares a will link, so it
+ * summarises the will's status, locked balance and beneficiary count without
+ * exposing addresses.
+ *
+ * Used by the public will routes, which run in React Server Components:
+ *   - `src/app/verify/[id]/page.tsx`
+ *   - `src/app/inherit/[id]/page.tsx`
+ *
+ * Typical usage in a route:
+ *
+ * ```ts
+ * export async function generateMetadata({ params }) {
+ *   const { id } = await params;
+ *   const will = await getCachedWill(id);
+ *   return { title: `Will ${id}`, description: buildWillMetadataDescription(will) };
+ * }
+ *
+ * export default async function Page({ params }) {
+ *   const { id } = await params;
+ *   const will = await getCachedWill(id); // reuses the fetch above, no second RPC
+ *   // ...
+ * }
+ * ```
+ */
 import { cache } from 'react';
 import type { Will } from '@sorowill/sdk';
 
