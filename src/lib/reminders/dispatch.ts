@@ -5,6 +5,15 @@ import { getSoroWillClient } from '@/lib/sorowill';
 
 const BATCH_SIZE = 10;
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isValidEmail(email: string | undefined | null): boolean {
+  if (!email || typeof email !== 'string') {
+    return false;
+  }
+  return EMAIL_REGEX.test(email.trim());
+}
+
 async function readStoreFromKv(): Promise<ReminderStore> {
   const url = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
@@ -117,6 +126,15 @@ export async function dispatchReminderEmails(): Promise<ReminderDispatchResult> 
         // Skip if already in history
         const histKey = `${subscription.willId}:${subscription.email}`;
         if (store.history[histKey]) {
+          result.skipped++;
+          continue;
+        }
+
+        // Skip invalid email formats before attempting to send
+        if (!isValidEmail(subscription.email)) {
+          console.warn(
+            `Skipping reminder for will ${subscription.willId}: invalid email format "${subscription.email}"`,
+          );
           result.skipped++;
           continue;
         }
