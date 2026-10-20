@@ -7,6 +7,9 @@ import { type Will, formatUSDC } from '@sorowill/sdk';
 import { getSoroWillClient } from '@/lib/sorowill';
 import { safeGetPublicKey, truncateAddress } from '@/lib/freighter';
 import { formatError } from '@/lib/errors';
+import { GUARDIAN_THRESHOLD } from '@/lib/constants';
+
+const BROADCAST_CHANNEL_NAME = 'wallet_state';
 
 function OnboardContent() {
   const searchParams = useSearchParams();
@@ -18,11 +21,49 @@ function OnboardContent() {
   const [publicKey, setPublicKey] = useState<string | null>(null);
 
   useEffect(() => {
-    void safeGetPublicKey().then(setPublicKey);
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    // The one-time mount check below and the broadcast listener both resolve
+    // asynchronously and race each other. Without this flag, a broadcast
+    // received while the mount check's promise is still pending would get
+    // silently overwritten once that stale promise finally resolves.
+    let receivedBroadcast = false;
+
+    const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+    const handleMessage = (event: MessageEvent) => {
+      const { type, publicKey: incomingKey } = event.data ?? {};
+
+      if (type === 'wallet_connected' && incomingKey) {
+        receivedBroadcast = true;
+        setPublicKey(incomingKey);
+      } else if (type === 'wallet_disconnected') {
+        receivedBroadcast = true;
+        setPublicKey(null);
+      }
+    };
+
+    channel.addEventListener('message', handleMessage);
+    void safeGetPublicKey().then((key) => {
+      if (!receivedBroadcast) {
+        setPublicKey(key);
+      }
+    });
+
+    return () => {
+      channel.removeEventListener('message', handleMessage);
+      channel.close();
+    };
   }, []);
 
   useEffect(() => {
     if (!willId) return;
+    if (!/^\d+$/.test(willId) || Number(willId) < 0) {
+      setError('Invalid will ID. Please use a non-negative integer.');
+      setWill(null);
+      return;
+    }
 
     setLoading(true);
     setError(null);
@@ -61,7 +102,7 @@ function OnboardContent() {
 
         <div className="grid gap-4 mt-4 sm:grid-cols-2">
           <div className="p-4 rounded-lg bg-white/5 border border-white/5">
-            <h3 className="text-sm font-semibold text-will-light">1. missed check-ins</h3>
+            <h3 className="text-sm font-semibold text-will-light">1. Missed check-ins</h3>
             <p className="mt-1 text-xs text-will-light/60">
               If the owner misses their check-in, anyone can trigger the grace period. You should stay in contact to check if they are okay.
             </p>
@@ -69,7 +110,7 @@ function OnboardContent() {
           <div className="p-4 rounded-lg bg-white/5 border border-white/5">
             <h3 className="text-sm font-semibold text-will-light">2. Quorum release</h3>
             <p className="mt-1 text-xs text-will-light/60">
-              If needed, any 2 of the designated guardians can vote to release the inheritance early, bypassing the remaining grace period.
+              If needed, any {GUARDIAN_THRESHOLD} of the designated guardians can vote to release the inheritance early, bypassing the remaining grace period.
             </p>
           </div>
         </div>

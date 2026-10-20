@@ -1,0 +1,126 @@
+/**
+ * Token-decimal resolution for balance formatting.
+ *
+ * The SoroWill contract supports any Stellar token, each of which may have a
+ * different number of decimal places. The SDK's `formatUSDC` always divides by
+ * 1 000 000 (6 decimals), which is silently wrong for any non-USDC token.
+ *
+ * `getTokenDecimals` returns the correct decimal count for a given token
+ * contract address, falling back to 7 (XLM / most Stellar native tokens) when
+ * the token is not in the registry. `formatTokenBalance` uses that count to
+ * produce the human-readable balance string written into CSV exports and other
+ * non-UI contexts where `formatUSDC` must not be used blindly.
+ *
+ * Contract IDs are only unique per network, so both the registry and the
+ * resolved-decimals cache are scoped by network (cache key:
+ * `${network}-${contractId}`). The cache is also cleared whenever the active
+ * network changes so a stale value from the previous network is never served.
+ *
+ * Adding support for a new token: insert its lowercased contract address and
+ * decimal count under the right network in TOKEN_DECIMALS_REGISTRY below.
+ * No other changes are needed.
+ */
+
+import { type SoroWillNetwork } from '@sorowill/sdk';
+
+import { getNetwork } from '@/lib/sorowill';
+
+/**
+ * Registry of known token contract addresses → decimal places, per network.
+ * Keys are lowercased Stellar contract addresses (C…).
+ *
+ * Sources:
+ *   - USDC (Circle): 6 decimals
+ *   - EURC (Circle): 6 decimals
+ *   - XLM wrapped SAC: 7 decimals (Stellar native precision)
+ */
+const TOKEN_DECIMALS_REGISTRY: Record<SoroWillNetwork, Record<string, number>> = {
+  testnet: {
+    // Testnet USDC (Circle / Centre SAC)
+    ccw67htgnfmxkfgrr2mkrb2v6dnfgblxjofkldlnoicl5ux4yk7cplaa: 6,
+    // Testnet XLM SAC (wrapped native)
+    cdlzfc3gg5h6hzh5g5g5gbdnhzdpzpzfq3a7p4xf2hqfpzpzfq3a7p4a: 7,
+  },
+  mainnet: {
+    // Mainnet USDC
+    cbieltk6ybzbbfxdgbtnmwcfmhbzlkr5cbkntw6ycjlibdwxbvjsf7fd: 6,
+    // Mainnet EURC (Circle)
+    certlk5lj55fpnqmkv5aefkzqkx3bgxmxdmhwrm4gv7ikhwlxm5h5mda: 6,
+  },
+};
+
+/** Decimal count used when the token is not in the registry. */
+const DEFAULT_DECIMALS = 7;
+
+/** Resolved decimals, keyed by `${network}-${lowercased contractId}`. */
+const decimalsCache = new Map<string, number>();
+/** Active network the cache was last populated for. */
+let cachedForNetwork: SoroWillNetwork | undefined;
+
+/** Clears the resolved-decimals cache. Call this when the network changes. */
+export function clearTokenDecimalsCache(): void {
+  decimalsCache.clear();
+  cachedForNetwork = undefined;
+}
+
+/**
+ * Returns the number of decimal places for `tokenAddress` on `network`
+ * (defaults to the active network). Falls back to `DEFAULT_DECIMALS` (7) for
+ * unrecognised tokens.
+ */
+export function getTokenDecimals(tokenAddress: string, network?: SoroWillNetwork): number {
+  const activeNetwork = getNetwork();
+  if (cachedForNetwork !== activeNetwork) {
+    decimalsCache.clear();
+    cachedForNetwork = activeNetwork;
+  }
+
+  const resolvedNetwork = network ?? activeNetwork;
+  const id = tokenAddress.toLowerCase();
+  const key = `${resolvedNetwork}-${id}`;
+  const cached = decimalsCache.get(key);
+  if (cached !== undefined) return cached;
+
+  const decimals = TOKEN_DECIMALS_REGISTRY[resolvedNetwork]?.[id] ?? DEFAULT_DECIMALS;
+  decimalsCache.set(key, decimals);
+  return decimals;
+}
+
+/**
+ * Formats `balanceBaseUnits` (the raw integer stored by the contract) as a
+ * human-readable decimal string using the correct precision for `tokenAddress`.
+ *
+ * Examples:
+ *   formatTokenBalance('1000000', 'CUSDC...', 6)  →  '1.000000'
+ *   formatTokenBalance('10000000', 'CXLM...', 7)  →  '1.0000000'
+ *   formatTokenBalance('100', 'CTOKEN...', 2)     →  '1.00'
+ *
+ * The result always has exactly `decimals` fractional digits and uses
+ * standard thousands separators, matching the style of `formatUSDC`.
+ */
+export function formatTokenBalance(
+  balanceBaseUnits: string | bigint,
+  tokenAddress: string,
+  /** Override decimals — used in tests and when decimals are already known. */
+  decimalsOverride?: number,
+): string {
+  const decimals = decimalsOverride ?? getTokenDecimals(tokenAddress);
+  const raw = typeof balanceBaseUnits === 'bigint' ? balanceBaseUnits : BigInt(balanceBaseUnits);
+
+  const isNegative = raw < 0n;
+  const absRaw = isNegative ? -raw : raw;
+
+  if (decimals <= 0) {
+    const formattedWhole = new Intl.NumberFormat('en-US').format(absRaw);
+    return `${isNegative ? '-' : ''}${formattedWhole}`;
+  }
+
+  const divisor = BigInt(10) ** BigInt(decimals);
+  const whole = absRaw / divisor;
+  const fraction = absRaw % divisor;
+
+  const formattedWhole = new Intl.NumberFormat('en-US').format(whole);
+  const fracStr = fraction.toString().padStart(decimals, '0');
+
+  return `${isNegative ? '-' : ''}${formattedWhole}.${fracStr}`;
+}

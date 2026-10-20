@@ -1,18 +1,29 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { formatUSDC, toStroops, validateBeneficiaries, type Beneficiary } from '@sorowill/sdk';
 
 import { truncateAddress, safeGetPublicKey } from '@/lib/freighter';
 import { getSoroWillClient } from '@/lib/sorowill';
-import { formatError } from '@/lib/errors';
+import { GUARDIAN_THRESHOLD, MAX_GUARDIANS } from '@/lib/constants';
+import { formatError, classifyCloneError, type CloneErrorKind } from '@/lib/errors';
 import { isFederatedAddress, resolveFederatedAddress } from '@/lib/federated';
 import { getUserBalance } from '@/lib/balance';
 import { isValidAmount } from '@/lib/amount';
 import { BeneficiaryForm } from '@/components/BeneficiaryForm';
+import { GuardianForm } from '@/components/GuardianForm';
 import { validateGuardians } from '@/lib/guardianValidation';
+import { useStableRowIds } from '@/lib/useStableRowIds';
+import {
+  DRAFT_STORAGE_KEY,
+  clearDraft,
+  loadDraft,
+  parsePeriodInput,
+  type FormStateDraft,
+} from '@/lib/draftValidation';
+import { useToast } from '@/components/Toast';
 
 const CHECKIN_OPTIONS = [30, 60, 90, 180, 365];
 const GRACE_OPTIONS = [3, 7, 14];
@@ -22,7 +33,7 @@ const GRACE_OPTIONS = [3, 7, 14];
 const SAFE_CHECKIN_WINDOW_DAYS = 60;
 
 const STEP_LABELS = ['Amount', 'Beneficiaries', 'Timing', 'Guardians', 'Review'];
-const STORAGE_KEY = 'sorowill-form-draft';
+const STORAGE_KEY = DRAFT_STORAGE_KEY;
 
 interface FormState {
   step: number;
@@ -34,9 +45,31 @@ interface FormState {
   guardians: string[];
 }
 
+export function isValidDraft(value: unknown): value is FormState {
+  if (!value || typeof value !== 'object') return false;
+  const draft = value as FormState;
+  return Number.isInteger(draft.step) && draft.step >= 0 && draft.step < STEP_LABELS.length &&
+    typeof draft.token === 'string' && typeof draft.amount === 'string' && Array.isArray(draft.beneficiaries) &&
+    Number.isInteger(draft.checkinPeriodDays) && draft.checkinPeriodDays > 0 &&
+    Number.isInteger(draft.gracePeriodDays) && draft.gracePeriodDays > 0 && Array.isArray(draft.guardians);
+}
+
 /** True when a check-in period exceeds the contract's safe storage TTL window. */
 function isUnsafeCheckinPeriod(days: number): boolean {
   return days > SAFE_CHECKIN_WINDOW_DAYS;
+}
+
+export function getSubmittedGuardians(
+  guardians: string[],
+  resolvedGuardians: Map<string, string>,
+  guardianIds: Map<number, string>,
+): string[] {
+  return guardians
+    .map((guardian, index) => {
+      const id = guardianIds.get(index);
+      return (id && resolvedGuardians.get(id)) || guardian;
+    })
+    .filter((guardian) => guardian.trim() !== '');
 }
 
 // Soroban contract strkey: 'C' followed by 55 base32 chars (RFC 4648 alphabet,
@@ -56,20 +89,13 @@ export default function NewWillPage() {
   const [gracePeriodDays, setGracePeriodDays] = useState(7);
   const [guardians, setGuardians] = useState<string[]>([]);
   const [cloneLoading, setCloneLoading] = useState(false);
+  const [cloneError, setCloneError] = useState<CloneErrorKind | null>(null);
   const [resumeAvailable, setResumeAvailable] = useState(false);
+  // Validated draft captured on mount, before the autosave effect below
+  // overwrites localStorage with the fresh form's defaults.
+  const pendingDraftRef = useRef<FormStateDraft | null>(null);
 
-  const [guardianIds, setGuardianIds] = useState<Map<number, string>>(new Map());
-
-  const stableGuardianIds = useMemo(() => {
-    const newIds = new Map(guardianIds);
-    guardians.forEach((_, index) => {
-      if (!newIds.has(index)) {
-        newIds.set(index, crypto.randomUUID());
-      }
-    });
-    setGuardianIds(newIds);
-    return newIds;
-  }, [guardians.length]);
+  const stableGuardianIds = useStableRowIds(guardians.length);
 
   const [resolvedGuardians, setResolvedGuardians] = useState<Map<string, string>>(new Map());
   const [resolvingGuardianId, setResolvingGuardianId] = useState<string | null>(null);
@@ -84,6 +110,10 @@ export default function NewWillPage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checkinPeriodError, setCheckinPeriodError] = useState<string | null>(null);
+  const [gracePeriodError, setGracePeriodError] = useState<string | null>(null);
+
+  const toast = useToast();
 
   // Fetch the connected wallet address once so we can reject it as a guardian.
   useEffect(() => {
@@ -91,17 +121,16 @@ export default function NewWillPage() {
   }, []);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const draft = localStorage.getItem(STORAGE_KEY);
-      if (draft && !cloneFromId) {
-        try {
-          setResumeAvailable(true);
-        } catch {
-          setResumeAvailable(false);
-        }
-      }
+    if (typeof window === 'undefined' || cloneFromId) return;
+    const result = loadDraft(localStorage);
+    if (result.status === 'valid') {
+      pendingDraftRef.current = result.draft;
+      setResumeAvailable(true);
+    } else if (result.status === 'invalid') {
+      // loadDraft already removed the corrupted / stale draft from storage.
+      toast.info('Saved draft was invalid and has been discarded.');
     }
-  }, [cloneFromId]);
+  }, [cloneFromId, toast]);
 
   useEffect(() => {
     const fetchBalance = async () => {
@@ -122,11 +151,31 @@ export default function NewWillPage() {
     void fetchBalance();
   }, []);
 
+  // Clear the draft when the wallet disconnects so stale state is never
+  // re-loaded by a different account in the same browser session.
+  useEffect(() => {
+    if (ownerAddress === null) return; // not yet resolved
+
+    // Poll Freighter every 2 s; when the key disappears the user has
+    // disconnected.  safeGetPublicKey already suppresses all errors.
+    const interval = setInterval(() => {
+      void safeGetPublicKey().then((key) => {
+        if (key === null && typeof window !== 'undefined') {
+          clearDraft(localStorage);
+          pendingDraftRef.current = null;
+          setResumeAvailable(false);
+        }
+      });
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [ownerAddress]);
+
   useEffect(() => {
     if (cloneFromId) {
       setCloneLoading(true);
       getSoroWillClient()
-        .getWill(cloneFromId)
+      .getWill(cloneFromId)
         .then((sourceWill) => {
           setToken(sourceWill.token);
           setBeneficiaries(sourceWill.beneficiaries);
@@ -136,7 +185,7 @@ export default function NewWillPage() {
           setCloneLoading(false);
         })
         .catch((err) => {
-          setError(formatError(err));
+          setCloneError(classifyCloneError(err));
           setCloneLoading(false);
         });
     }
@@ -144,7 +193,7 @@ export default function NewWillPage() {
 
   const tokenValid = CONTRACT_ADDRESS_PATTERN.test(token.trim());
   const showTokenError = token.trim() !== '' && !tokenValid;
-  const isAmountValid = amount.trim() !== '' && Number(amount) > 0 && tokenValid;
+  const isAmountValid = isValidAmount(amount) && tokenValid;
   useEffect(() => {
     const state: FormState = {
       step,
@@ -161,24 +210,17 @@ export default function NewWillPage() {
   }, [step, token, amount, beneficiaries, checkinPeriodDays, gracePeriodDays, guardians]);
 
   function resumeDraft() {
-    if (typeof window !== 'undefined') {
-      const draft = localStorage.getItem(STORAGE_KEY);
-      if (draft) {
-        try {
-          const state: FormState = JSON.parse(draft);
-          setStep(state.step);
-          setToken(state.token);
-          setAmount(state.amount);
-          setBeneficiaries(state.beneficiaries);
-          setCheckinPeriodDays(state.checkinPeriodDays);
-          setGracePeriodDays(state.gracePeriodDays);
-          setGuardians(state.guardians);
-          setResumeAvailable(false);
-        } catch {
-          setError('Failed to resume draft');
-        }
-      }
-    }
+    const state = pendingDraftRef.current;
+    pendingDraftRef.current = null;
+    setResumeAvailable(false);
+    if (!state) return;
+    setStep(state.step);
+    setToken(state.token);
+    setAmount(state.amount);
+    setBeneficiaries(state.beneficiaries);
+    setCheckinPeriodDays(state.checkinPeriodDays);
+    setGracePeriodDays(state.gracePeriodDays);
+    setGuardians(state.guardians);
   }
 
   function setMaxAmount() {
@@ -187,14 +229,19 @@ export default function NewWillPage() {
     }
   }
 
-  const beneficiariesValid = validateBeneficiaries(beneficiaries) && beneficiaries.every((b) => b.address.trim() !== '');
+  const beneficiariesValid =
+    validateBeneficiaries(beneficiaries) &&
+    beneficiaries.every((b) => b.address.trim() !== '') &&
+    // Block progression if any beneficiary still holds an unresolved federated address.
+    // The user must click "Resolve" before the address is replaced with the real G... key.
+    beneficiaries.every((b) => !isFederatedAddress(b.address));
 
   const { rowErrors: guardianRowErrors, topError: guardianTopError } = validateGuardians(guardians, ownerAddress);
   // Step 3 is valid when there are no row-level errors (blank rows are a
   // warning, not a blocking error — the user sees the warning and can proceed).
   const guardiansValid = guardianTopError === null;
 
-  const canGoNext = [amountValid, beneficiariesValid, true, guardiansValid, true][step];
+  const canGoNext = [isAmountValid, beneficiariesValid, checkinPeriodError === null && gracePeriodError === null, guardiansValid, true][step];
 
   // Rows that are blank — the user will see a warning that they'll be dropped.
   const blankGuardianIndices = guardians
@@ -290,7 +337,7 @@ export default function NewWillPage() {
   }
 
   function addGuardian() {
-    if (guardians.length < 3) {
+    if (guardians.length < MAX_GUARDIANS) {
       setGuardians((prev) => [...prev, '']);
     }
   }
@@ -302,6 +349,11 @@ export default function NewWillPage() {
   async function handleSubmit() {
     setSubmitting(true);
     setError(null);
+    if (!Number.isInteger(checkinPeriodDays) || checkinPeriodDays <= 0 || !Number.isInteger(gracePeriodDays) || gracePeriodDays <= 0) {
+      setError('Check-in and grace periods must be positive whole numbers.');
+      setSubmitting(false);
+      return;
+    }
     
     // Validate guardians before submission
     if (guardianTopError !== null) {
@@ -309,8 +361,24 @@ export default function NewWillPage() {
       setSubmitting(false);
       return;
     }
-    
+
     try {
+      // Validate guardians before submission
+      if (guardianTopError !== null) {
+        setError('Please fix the guardian address errors before submitting.');
+        return;
+      }
+
+      // Defense-in-depth: block submission if any beneficiary address is still a
+      // federated address string. The user must resolve it to a real G... key first.
+      const unresolvedFederated = beneficiaries.filter((b) => isFederatedAddress(b.address));
+      if (unresolvedFederated.length > 0) {
+        setError(
+          'One or more beneficiary addresses are still federated addresses. Please resolve them to Stellar addresses before submitting.',
+        );
+        return;
+      }
+
       const client = getSoroWillClient();
       const { willId } = await client.createWill({
         token,
@@ -318,14 +386,15 @@ export default function NewWillPage() {
         beneficiaries,
         checkinPeriodDays,
         gracePeriodDays,
-        guardians: guardians.filter((g) => g.trim() !== ''),
+        guardians: getSubmittedGuardians(guardians, resolvedGuardians, stableGuardianIds),
       });
       if (typeof window !== 'undefined') {
-        localStorage.removeItem(STORAGE_KEY);
+        clearDraft(localStorage);
       }
       router.push(`/will/${willId}`);
     } catch (err) {
       setError(formatError(err));
+    } finally {
       setSubmitting(false);
     }
   }
@@ -339,10 +408,16 @@ export default function NewWillPage() {
         </p>
         <div className="mt-3 flex gap-1.5">
           {STEP_LABELS.map((label, index) => (
-            <span
+            <button
               key={label}
-              className={`h-1.5 flex-1 rounded-full ${index <= step ? 'bg-will-purple' : 'bg-white/10'}`}
-              aria-hidden="true"
+              type="button"
+              onClick={() => {
+                if (index <= step) {
+                  setStep(index);
+                }
+              }}
+              className={`h-1.5 flex-1 rounded-full ${index <= step ? 'bg-will-purple cursor-pointer hover:opacity-80' : 'bg-white/10 cursor-not-allowed'}`}
+              aria-label={index <= step ? `Go to step ${index + 1}: ${label}` : undefined}
             />
           ))}
         </div>
@@ -372,7 +447,68 @@ export default function NewWillPage() {
         </div>
       )}
 
-      {!cloneLoading && (
+      {cloneError && (
+        <div
+          className="rounded-xl border border-red-500/30 bg-red-500/10 p-6 text-center"
+          role="alert"
+          data-testid="clone-error"
+        >
+          <h2 className="text-base font-semibold text-red-300">
+            {cloneError === 'not_found' && 'Will has been deleted'}
+            {cloneError === 'permission' && 'Access denied'}
+            {cloneError === 'network' && 'Connection error'}
+            {cloneError === 'unknown' && 'Could not load will'}
+          </h2>
+          <p className="mt-2 text-sm text-red-300/70">
+            {cloneError === 'not_found' &&
+              'Will has been deleted — it no longer exists on chain.'}
+            {cloneError === 'permission' &&
+              'You no longer have access to this will.'}
+            {cloneError === 'network' &&
+              'Unable to fetch will — check your connection and try again.'}
+            {cloneError === 'unknown' &&
+              'The source will could not be loaded. Please go back and try again.'}
+          </p>
+          <div className="mt-4 flex justify-center gap-3">
+            {cloneError === 'network' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCloneError(null);
+                  setCloneLoading(true);
+                  getSoroWillClient()
+                    .getWill(cloneFromId!)
+                    .then((sourceWill) => {
+                      setToken(sourceWill.token);
+                      setBeneficiaries(sourceWill.beneficiaries);
+                      setCheckinPeriodDays(sourceWill.checkinPeriodDays);
+                      setGracePeriodDays(sourceWill.gracePeriodDays);
+                      setGuardians(sourceWill.guardians);
+                      setCloneLoading(false);
+                    })
+                    .catch((err) => {
+                      console.error('[NewWillPage] Clone retry failed:', err);
+                      setCloneError(classifyCloneError(err));
+                      setCloneLoading(false);
+                    });
+                }}
+                className="rounded-full bg-will-purple px-4 py-2 text-sm font-medium text-white transition hover:bg-will-purple/90"
+              >
+                Try again
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="rounded-full border border-red-400/40 px-4 py-2 text-sm text-red-300 transition hover:border-red-400/70"
+            >
+              Go back
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!cloneLoading && !cloneError && (
         <div className="rounded-xl border border-white/10 bg-white/5 p-6">
         {step === 0 ? (
           <div className="space-y-4">
@@ -473,16 +609,34 @@ export default function NewWillPage() {
                   type="number"
                   min={1}
                   max={3650}
+                  step={1}
                   value={checkinPeriodDays}
                   onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    if (!isNaN(val) && val > 0) {
-                      setCheckinPeriodDays(val);
+                    setCheckinPeriodError(null);
+                    const parsed = parsePeriodInput(e.target.value);
+                    if (parsed !== null) {
+                      setCheckinPeriodDays(parsed);
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const parsed = parsePeriodInput(e.target.value);
+                    if (parsed === null) {
+                      setCheckinPeriodError('Please enter a whole number of days between 1 and 3650.');
+                    } else {
+                      setCheckinPeriodError(null);
+                      setCheckinPeriodDays(parsed);
                     }
                   }}
                   placeholder="Enter days"
-                  className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none"
+                  aria-describedby={checkinPeriodError ? 'checkin-period-error' : undefined}
+                  aria-invalid={checkinPeriodError !== null}
+                  className={`rounded-lg border bg-white/5 px-3 py-2 text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none ${checkinPeriodError ? 'border-red-400' : 'border-white/10'}`}
                 />
+                {checkinPeriodError ? (
+                  <p id="checkin-period-error" role="alert" className="text-xs text-red-400">
+                    {checkinPeriodError}
+                  </p>
+                ) : null}
               </div>
               {isUnsafeCheckinPeriod(checkinPeriodDays) && (
                 <div className="rounded-lg border border-amber-400/40 bg-amber-400/5 px-3 py-3" role="status">
@@ -521,125 +675,56 @@ export default function NewWillPage() {
                   type="number"
                   min={1}
                   max={3650}
+                  step={1}
                   value={gracePeriodDays}
                   onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    if (!isNaN(val) && val > 0) {
-                      setGracePeriodDays(val);
+                    setGracePeriodError(null);
+                    const parsed = parsePeriodInput(e.target.value);
+                    if (parsed !== null) {
+                      setGracePeriodDays(parsed);
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const parsed = parsePeriodInput(e.target.value);
+                    if (parsed === null) {
+                      setGracePeriodError('Please enter a whole number of days between 1 and 3650.');
+                    } else {
+                      setGracePeriodError(null);
+                      setGracePeriodDays(parsed);
                     }
                   }}
                   placeholder="Enter days"
-                  className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none"
+                  aria-describedby={gracePeriodError ? 'grace-period-error' : undefined}
+                  aria-invalid={gracePeriodError !== null}
+                  className={`rounded-lg border bg-white/5 px-3 py-2 text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none ${gracePeriodError ? 'border-red-400' : 'border-white/10'}`}
                 />
+                {gracePeriodError ? (
+                  <p id="grace-period-error" role="alert" className="text-xs text-red-400">
+                    {gracePeriodError}
+                  </p>
+                ) : null}
               </div>
             </div>
           </fieldset>
         ) : null}
 
         {step === 3 ? (
-          <fieldset className="space-y-3">
-            <div className="flex items-center justify-between">
-              <legend className="text-sm font-medium text-will-light">Guardians (optional, up to 3)</legend>
-              <button
-                type="button"
-                onClick={addGuardian}
-                disabled={guardians.length >= 3}
-                aria-label={`Add guardian (${guardians.length} of 3)`}
-                className="text-xs font-medium text-will-purple hover:underline disabled:opacity-40"
-              >
-                + Add guardian
-              </button>
-            </div>
-            <p className="text-xs text-will-light/50">
-              Any 2 of your guardians can force an early release if you&apos;re incapacitated.
-            </p>
-
-            {guardians.map((guardian, index) => {
-              const guardianId = stableGuardianIds.get(index) || '';
-              return (
-              <div key={guardianId} className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <label htmlFor={`guardian-${index}`} className="sr-only">
-                    Guardian {index + 1} address
-                  </label>
-                  <input
-                    id={`guardian-${index}`}
-                    type="text"
-                    value={guardian}
-                    onChange={(event) => updateGuardian(index, event.target.value)}
-                    placeholder="Guardian address (G...) or federated address (name*domain.com)"
-                    aria-describedby={guardianRowErrors[index] ? `guardian-error-${index}` : undefined}
-                    aria-invalid={guardianRowErrors[index] ? 'true' : undefined}
-                    className={`min-w-0 flex-1 rounded-lg border px-3 py-2 font-mono text-sm text-will-light placeholder:text-will-light/40 focus:outline-none ${
-                      guardianRowErrors[index]
-                        ? 'border-red-400/60 bg-red-500/5 focus:border-red-400'
-                        : guardian.trim() === '' && guardians.length > 0
-                        ? 'border-amber-400/40 bg-white/5 focus:border-will-purple'
-                        : 'border-white/10 bg-white/5 focus:border-will-purple'
-                    }`}
-                  />
-                  {isFederatedAddress(guardian) && (
-                    <button
-                      type="button"
-                      onClick={() => resolveGuardianAddress(index, guardian)}
-                      disabled={resolvingGuardianId === guardianId}
-                      className="whitespace-nowrap rounded-lg border border-white/20 px-3 py-2 text-xs font-medium text-will-light/70 transition hover:border-will-purple hover:text-will-light disabled:opacity-40"
-                    >
-                      {resolvingGuardianId === guardianId ? 'Resolving…' : 'Resolve'}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => removeGuardian(index)}
-                    aria-label={`Remove guardian ${index + 1}`}
-                    className="rounded-lg border border-white/10 px-2 py-2 text-will-light/60 transition hover:border-red-400/40 hover:text-red-400"
-                  >
-                    ✕
-                  </button>
-                </div>
-                {resolvedGuardians.has(guardianId) && (
-                  <div className="rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-2">
-                    <p className="text-xs text-emerald-400">Resolved address:</p>
-                    <p className="font-mono text-xs text-emerald-300">{resolvedGuardians.get(guardianId)}</p>
-                  </div>
-                )}
-                {guardianResolutionError.has(guardianId) && (
-                  <div className="rounded-lg border border-red-400/40 bg-red-400/10 px-3 py-2">
-                    <p className="text-xs text-red-400">{guardianResolutionError.get(guardianId)}</p>
-                  </div>
-                )}
-                {/* Per-row validation errors */}
-                {guardianRowErrors[index] ? (
-                  <p id={`guardian-error-${index}`} className="text-xs text-red-400" role="alert">
-                    {guardianRowErrors[index]}
-                  </p>
-                ) : null}
-                {/* Blank-row warning — shown only when there are no other errors for this row */}
-                {!guardianRowErrors[index] && guardian.trim() === '' ? (
-                  <p className="text-xs text-amber-400/80">
-                    This empty row will be excluded when the will is submitted.
-                  </p>
-                ) : null}
-              </div>
-            );
-            })}
-
-            {/* Top-level validation error when guardians have issues */}
-            {guardianTopError && (
-              <p className="rounded-lg border border-red-400/40 bg-red-400/10 px-3 py-2 text-xs text-red-400" role="alert">
-                {guardianTopError}
-              </p>
-            )}
-
-            {/* Summary warning when blank rows exist alongside valid rows */}
-            {blankGuardianIndices.length > 0 && guardians.some((g) => g.trim() !== '') ? (
-              <p className="rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-xs text-amber-400" role="status">
-                {blankGuardianIndices.length === 1
-                  ? '1 empty guardian row will not be included in the will.'
-                  : `${blankGuardianIndices.length} empty guardian rows will not be included in the will.`}
-              </p>
-            ) : null}
-
+          <>
+            <GuardianForm
+              guardians={guardians}
+              guardianIds={stableGuardianIds}
+              resolvedGuardians={resolvedGuardians}
+              guardianResolutionError={guardianResolutionError}
+              resolvingGuardianId={resolvingGuardianId}
+              rowErrors={guardianRowErrors}
+              topError={guardianTopError}
+              blankGuardianIndices={blankGuardianIndices}
+              ownerAddress={ownerAddress}
+              onAdd={addGuardian}
+              onRemove={removeGuardian}
+              onUpdate={updateGuardian}
+              onResolve={resolveGuardianAddress}
+            />
             {guardianBeneficiaryOverlap.length > 0 ? (
               <p className="rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-xs text-amber-400" role="status">
                 {guardianBeneficiaryOverlap.length === 1
@@ -647,7 +732,7 @@ export default function NewWillPage() {
                   : `${guardianBeneficiaryOverlap.length} guardians are also listed as beneficiaries — this changes who can vote to trigger an early release of funds they themselves stand to receive.`}
               </p>
             ) : null}
-          </fieldset>
+          </>
         ) : null}
 
         {step === 4 ? (
@@ -698,7 +783,7 @@ export default function NewWillPage() {
                       ))}
                   </dd>
                   <p className="mt-2 text-xs text-will-light/50">
-                    Any 2 of your guardians can force an early release if you&apos;re incapacitated.
+                    Any {GUARDIAN_THRESHOLD} of your guardians can force an early release if you&apos;re incapacitated.
                   </p>
                   {guardianBeneficiaryOverlap.length > 0 ? (
                     <p className="mt-2 rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-xs text-amber-400" role="status">
@@ -717,6 +802,7 @@ export default function NewWillPage() {
 
       {error ? <p className="text-sm text-red-400">{error}</p> : null}
 
+      {!cloneError && (
       <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
         <button
           type="button"
@@ -746,6 +832,7 @@ export default function NewWillPage() {
           </button>
         )}
       </div>
+      )}
     </div>
   );
 }

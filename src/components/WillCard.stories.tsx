@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import { fn } from '@storybook/test';
+import { fn } from 'storybook/test';
 import { WillStatus, type Will } from '@sorowill/sdk';
 import { WillCard } from './WillCard';
 

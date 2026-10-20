@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import { fn } from '@storybook/test';
+import { fn } from 'storybook/test';
 import type { Beneficiary } from '@sorowill/sdk';
 import { BeneficiaryForm } from './BeneficiaryForm';
 

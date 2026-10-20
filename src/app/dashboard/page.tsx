@@ -1,15 +1,18 @@
 'use client';
-// dummy comment for tests/unit/BundleSize.test.ts: next/dynamic dynamic()
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 import { WillStatus, type Will, formatUSDC, toStroops } from '@sorowill/sdk';
 
 import { safeGetPublicKey } from '@/lib/freighter';
 import { getSoroWillClient, getWillsByGuardian } from '@/lib/sorowill';
-import { formatError } from '@/lib/errors';
+import { getInvalidBatchAmounts, isValidAmount } from '@/lib/amount';
+import { formatError, formatLoadError } from '@/lib/errors';
+import { exportWillsToCSV } from '@/lib/willExport';
 import { useToast } from '@/components/Toast';
+import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts';
 import { WillCard } from '@/components/WillCard';
 
 // TODO(#5): Add an activity feed (check-ins, top-ups, guardian votes) once
@@ -53,6 +56,10 @@ function matchesSearch(will: Will, query: string): boolean {
   );
 }
 
+export function filterWills(wills: Will[], query: string, status: StatusFilter): Will[] {
+  return wills.filter((will) => matchesSearch(will, query) && (status === 'all' || will.status === status));
+}
+
 function CardSkeleton() {
   return (
     <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 p-4">
@@ -65,8 +72,11 @@ function CardSkeleton() {
   );
 }
 
-export default function DashboardPage() {
+function DashboardPageOld() {
   const toast = useToast();
+  const router = useRouter();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [checkedWallet, setCheckedWallet] = useState(false);
   const [tab, setTab] = useState<Tab>('owned');
@@ -75,9 +85,10 @@ export default function DashboardPage() {
   const [ownedWills, setOwnedWills] = useState<Will[]>([]);
   const [inheritingWills, setInheritingWills] = useState<Will[]>([]);
   const [guardianWills, setGuardianWills] = useState<Will[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [checkingInId, setCheckingInId] = useState<string | null>(null);
+  const [guardianScanWarning, setGuardianScanWarning] = useState(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -99,28 +110,52 @@ export default function DashboardPage() {
     };
   }, []);
 
+  const handleShortcutNewWill = useCallback(() => router.push('/will/new'), [router]);
+  const handleShortcutSearch = useCallback(() => searchInputRef.current?.focus(), []);
+  const handleShortcutHelp = useCallback(() => setShowShortcutsHelp((prev) => !prev), []);
+
+  useKeyboardShortcuts({
+    onNewWill: handleShortcutNewWill,
+    onSearch: handleShortcutSearch,
+    onHelp: handleShortcutHelp,
+  });
+
   const loadWills = useCallback(async (owner: string) => {
     setLoading(true);
     setError(null);
     try {
-      const client = getSoroWillClient();
+      let client;
+      try {
+        client = getSoroWillClient();
+      } catch (initError) {
+        const errorMsg = initError instanceof Error ? initError.message : String(initError);
+        console.error('[Dashboard] Client init error:', errorMsg);
+        throw new Error(`Failed to initialize Soroban client: ${errorMsg}`);
+      }
+
+      console.log('[Dashboard] Client initialized, fetching wills for:', owner);
       const [owned, inheriting, guardian] = await Promise.all([
         client.getWillsByOwner(owner),
         client.getWillsByBeneficiary(owner),
         getWillsByGuardian(owner),
       ]);
+
       if (!isMounted.current) {
         return;
       }
+
+      console.log('[Dashboard] Wills loaded:', { owned: owned.length, inheriting: inheriting.length, guardian: guardian.wills.length });
       setOwnedWills(owned);
       setInheritingWills(inheriting);
-      setGuardianWills(guardian);
+      setGuardianWills(guardian.wills);
+      setGuardianScanWarning(guardian.hasErrors);
       setLastFetchTime(new Date());
     } catch (err) {
       if (!isMounted.current) {
         return;
       }
-      setError(formatError(err));
+      console.error('[Dashboard] Failed to load wills:', err);
+      setError(formatLoadError(err));
     } finally {
       if (isMounted.current) {
         setLoading(false);
@@ -128,11 +163,24 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const handleRetry = useCallback(() => {
+    if (publicKey) {
+      void loadWills(publicKey);
+    }
+  }, [publicKey, loadWills]);
+
   const handleManualRefresh = useCallback(async () => {
     if (!publicKey) return;
     setIsRefreshing(true);
     try {
-      const client = getSoroWillClient();
+      let client;
+      try {
+        client = getSoroWillClient();
+      } catch (initError) {
+        setIsRefreshing(false);
+        setError(`Failed to initialize Soroban client: ${initError instanceof Error ? initError.message : String(initError)}`);
+        return;
+      }
       const [owned, inheriting, guardian] = await Promise.all([
         client.getWillsByOwner(publicKey),
         client.getWillsByBeneficiary(publicKey),
@@ -140,11 +188,13 @@ export default function DashboardPage() {
       ]);
       setOwnedWills(owned);
       setInheritingWills(inheriting);
-      setGuardianWills(guardian);
+      setGuardianWills(guardian.wills);
+      setGuardianScanWarning(guardian.hasErrors);
       setLastFetchTime(new Date());
       setError(null);
       toast.success('Data refreshed');
     } catch (err) {
+      console.error('[Dashboard] Failed to refresh wills:', err);
       const message = formatError(err);
       setError(message);
       toast.error(message);
@@ -160,6 +210,10 @@ export default function DashboardPage() {
       }
       setPublicKey(key);
       setCheckedWallet(true);
+      // If no wallet is connected there is nothing to load — stop the spinner.
+      if (!key) {
+        setLoading(false);
+      }
     });
   }, []);
 
@@ -221,7 +275,7 @@ export default function DashboardPage() {
 
     for (const willId of selectedWillIds) {
       const amount = batchAmounts[willId];
-      if (!amount || Number(amount) <= 0) {
+      if (!amount || !isValidAmount(amount)) {
         results[willId] = { status: 'error', message: 'Invalid or missing amount' };
         continue;
       }
@@ -262,12 +316,29 @@ export default function DashboardPage() {
   const baseList =
     tab === 'owned' ? ownedWills : tab === 'inheriting' ? inheritingWills : guardianWills;
 
-  const activeList = baseList.filter(
-    (will) =>
-      matchesSearch(will, search) && (statusFilter === 'all' || will.status === statusFilter),
-  );
+  const activeList = filterWills(baseList, search, statusFilter);
+
+  const handleExportCSV = useCallback(() => {
+    const csv = exportWillsToCSV(activeList);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `sorowill-wills-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [activeList]);
 
   const isFiltering = search.trim() !== '' || statusFilter !== 'all';
+
+  // getWillsByGuardian returns every will the address is listed on, including
+  // Cancelled/Released ones. Only wills still in force (Active or in their
+  // grace period) represent a live guardian responsibility.
+  const activeGuardianWills = guardianWills.filter(
+    (will) => will.status === WillStatus.Active || will.status === WillStatus.Triggered,
+  );
+
+  const invalidBatchWillIds = getInvalidBatchAmounts(selectedWillIds, batchAmounts);
 
   const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, tabName: Tab) => {
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
@@ -286,11 +357,11 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Top Guardian Alert */}
-      {guardianWills.length > 0 && (
+      {activeGuardianWills.length > 0 && (
         <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-emerald-300 text-sm flex justify-between items-center">
           <span>
             ℹ️ You are a designated guardian on{' '}
-            <strong className="underline">{guardianWills.length} active will(s)</strong>.
+            <strong className="underline">{activeGuardianWills.length} active will(s)</strong>.
           </span>
           <button
             onClick={() => {
@@ -301,6 +372,13 @@ export default function DashboardPage() {
           >
             View Role
           </button>
+        </div>
+      )}
+
+      {guardianScanWarning && (
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-amber-300 text-sm">
+          ⚠️ Some guardianship data could not be loaded due to a network error. Your guardian list above may be
+          incomplete — try refreshing.
         </div>
       )}
 
@@ -324,6 +402,15 @@ export default function DashboardPage() {
               }`}
             >
               {isMultiSelectMode ? 'Cancel Multi-select' : 'Multi-select Mode'}
+            </button>
+          )}
+          {tab === 'owned' && ownedWills.length > 0 && (
+            <button
+              type="button"
+              onClick={handleExportCSV}
+              className="rounded-full border border-white/20 px-4 py-2 text-sm text-will-light/80 transition hover:border-white/40 hover:text-will-light"
+            >
+              Export CSV ({activeList.length})
             </button>
           )}
           <button
@@ -409,6 +496,7 @@ export default function DashboardPage() {
       {/* Search & Filter */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <input
+          ref={searchInputRef}
           type="text"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
@@ -428,10 +516,43 @@ export default function DashboardPage() {
         </select>
       </div>
 
+      {showShortcutsHelp ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-will-light/70"
+        >
+          <span><kbd className="rounded bg-white/10 px-1.5 py-0.5 font-mono">n</kbd> New will</span>
+          <span><kbd className="rounded bg-white/10 px-1.5 py-0.5 font-mono">/</kbd> Search</span>
+          <span><kbd className="rounded bg-white/10 px-1.5 py-0.5 font-mono">?</kbd> Toggle this help</span>
+          <button
+            type="button"
+            onClick={() => setShowShortcutsHelp(false)}
+            className="ml-auto text-will-light/50 hover:text-will-light"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
       {error ? (
-        <p className="text-sm text-red-400" role="alert">
-          {error}
-        </p>
+        <div
+          className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 flex items-start justify-between gap-3"
+          role="alert"
+        >
+          <div>
+            <p className="text-sm font-semibold text-red-300">
+              Could not load your dashboard — check your connection
+            </p>
+            <p className="mt-1 text-xs text-red-300/70">{error}</p>
+          </div>
+          <button
+            type="button"
+            onClick={handleRetry}
+            className="shrink-0 rounded-full border border-red-400/50 px-3 py-1 text-xs font-medium text-red-300 transition hover:bg-red-400/10"
+          >
+            Try again
+          </button>
+        </div>
       ) : null}
 
       {/* Batch Top-up Form Panel */}
@@ -497,14 +618,19 @@ export default function DashboardPage() {
           <div className="flex justify-between items-center pt-2 border-t border-white/10">
             <span className="text-sm font-semibold text-will-light">
               Total Amount:{' '}
-              {Object.values(batchAmounts)
-                .reduce((sum, val) => sum + (Number(val) || 0), 0)
-                .toFixed(2)}{' '}
+              {formatUSDC(
+                BigInt(Object.values(batchAmounts).reduce((sum, val) => sum + (Number(val) || 0), 0)),
+              )}{' '}
               USDC
+              {invalidBatchWillIds.length > 0 && (
+                <span className="block text-xs font-normal text-red-400">
+                  Enter a valid amount for every selected will (no scientific notation).
+                </span>
+              )}
             </span>
             <button
               type="submit"
-              disabled={batchSubmitting}
+              disabled={batchSubmitting || invalidBatchWillIds.length > 0}
               className="rounded-full bg-will-purple px-5 py-2 text-sm font-semibold text-white transition hover:bg-will-purple/90 disabled:opacity-60"
             >
               {batchSubmitting ? 'Submitting Batch…' : 'Submit Batch Top-up'}
@@ -583,3 +709,5 @@ export default function DashboardPage() {
     </div>
   );
 }
+
+export default DashboardPageOld;

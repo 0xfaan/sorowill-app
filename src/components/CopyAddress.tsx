@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { truncateAddress } from '@/lib/freighter';
+import { useToast } from '@/components/Toast';
 
 export interface CopyAddressProps {
   /** The full address or transaction hash to copy. */
@@ -23,6 +24,16 @@ export interface CopyAddressProps {
 export function CopyAddress({ address, label, className = '' }: CopyAddressProps) {
   const t = useTranslations('common');
   const [copied, setCopied] = useState(false);
+  // One reset timer at a time: re-copying restarts it, unmounting clears it.
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    };
+  }, []);
+  const toast = useToast();
+  const t = useTranslations('common');
 
   const displayLabel = label !== undefined ? label : truncateAddress(address);
 
@@ -30,9 +41,14 @@ export function CopyAddress({ address, label, className = '' }: CopyAddressProps
     try {
       await navigator.clipboard.writeText(address);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+      resetTimer.current = setTimeout(() => {
+        resetTimer.current = null;
+        setCopied(false);
+      }, 2000);
     } catch {
-      // Clipboard API unavailable (e.g. insecure context); silently ignore.
+      // Clipboard API unavailable (e.g. insecure context or permission denied).
+      toast.error(t('clipboardError'));
     }
   }
 

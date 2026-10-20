@@ -13,19 +13,18 @@ import {
   type Will,
 } from '@sorowill/sdk';
 
-export function isTopUpAmountValid(topUpAmount: string): boolean {
-  return topUpAmount.trim() !== '' && !isNaN(Number(topUpAmount)) && Number(topUpAmount) > 0;
-}
-
 import { safeGetPublicKey, truncateAddress } from '@/lib/freighter';
 import { getSoroWillClient, stellarExpertUrl } from '@/lib/sorowill';
-import { formatError } from '@/lib/errors';
+import { formatError, formatLoadError } from '@/lib/errors';
+import { nextCheckinDeadline, graceDeadline } from '@/lib/deadlines';
 import { useToast } from '@/components/Toast';
 import { BeneficiaryForm } from '@/components/BeneficiaryForm';
 import { CountdownTimer } from '@/components/CountdownTimer';
 import { GuardianPanel } from '@/components/GuardianPanel';
+import { DestructiveActionConfirmation } from '@/components/DestructiveActionConfirmation';
 import { StatusBanner } from '@/components/StatusBanner';
 import { CopyAddress } from '@/components/CopyAddress';
+import { isTopUpAmountValid } from '@/lib/amount';
 
 interface ActivityEntry {
   action: string;
@@ -33,28 +32,53 @@ interface ActivityEntry {
   at: Date;
 }
 
-function isValidWillId(id: string): boolean {
-  return /^\d+$/.test(id);
+/** localStorage key holding the persisted activity log for one will. */
+export function activityStorageKey(willId: string): string {
+  return `sorowill-activity-${willId}`;
 }
 
-function nextCheckinDeadline(will: Will): Date {
-  return new Date(will.lastCheckin.getTime() + will.checkinPeriodDays * 86_400 * 1000);
-}
-
-function graceDeadline(will: Will): Date | null {
-  if (!will.triggerTime) {
-    return null;
+/**
+ * Restores a will's activity log from localStorage, converting each entry's
+ * `at` back into a `Date`. Returns an empty log if nothing is stored, if
+ * running outside a browser, or if the stored value isn't valid JSON.
+ */
+export function loadActivity(willId: string): ActivityEntry[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(activityStorageKey(willId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Array<{ action: string; txHash: string; at: string }>;
+    return parsed.map((entry) => ({ ...entry, at: new Date(entry.at) }));
+  } catch {
+    return [];
   }
-  return new Date(will.triggerTime.getTime() + will.gracePeriodDays * 86_400 * 1000);
+}
+
+/** localStorage key tracking whether `guardian` has already voted on `willId`. */
+function guardianVoteStorageKey(willId: string, guardian: string): string {
+  return `sorowill-guardian-voted-${willId}-${guardian}`;
+}
+
+/**
+ * Whether `guardian` has already cast their release vote for `willId` in
+ * this browser. The contract only exposes an aggregate vote count, not which
+ * specific guardians voted, so this is tracked client-side to keep the vote
+ * button correctly disabled across page reloads.
+ */
+function hasGuardianVoted(willId: string, guardian: string): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem(guardianVoteStorageKey(willId, guardian)) === 'true';
+}
+
+/** Records that `guardian` has cast their release vote for `willId`. */
+function markGuardianVoted(willId: string, guardian: string): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(guardianVoteStorageKey(willId, guardian), 'true');
 }
 
 function getGuardianVoteErrorMessage(err: unknown): string {
   const message = formatError(err);
   const normalized = message.toLowerCase();
-
-  if (normalized.includes('already voted')) {
-    return 'This guardian has already cast a vote for this will.';
-  }
 
   if (normalized.includes('not a guardian') || normalized.includes('not guardian')) {
     return 'Only listed guardians can cast a vote for this will.';
@@ -80,6 +104,10 @@ function isValidWillId(id: string): boolean {
   return /^\d+$/.test(id);
 }
 
+export function shouldReplaceBeneficiaryDraft(isEditing: boolean): boolean {
+  return !isEditing;
+}
+
 export default function WillDetailPage() {
   const toast = useToast();
   const router = useRouter();
@@ -93,7 +121,9 @@ export default function WillDetailPage() {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [castingVoteId, setCastingVoteId] = useState<string | null>(null);
+  const [hasVoted, setHasVoted] = useState(false);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [activityHydratedFor, setActivityHydratedFor] = useState<string | null>(null);
   const [exportingCertificate, setExportingCertificate] = useState(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -101,11 +131,15 @@ export default function WillDetailPage() {
   const [showTopUp, setShowTopUp] = useState(false);
   const [topUpAmount, setTopUpAmount] = useState('');
   const [showEditBeneficiaries, setShowEditBeneficiaries] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [draftBeneficiaries, setDraftBeneficiaries] = useState<Beneficiary[]>([]);
   const showEditBeneficiariesRef = useRef(false);
-  const [showEarlyRelease, setShowEarlyRelease] = useState(false);
-  const [earlyReleaseAmount, setEarlyReleaseAmount] = useState('');
-  const [earlyReleaseRecipient, setEarlyReleaseRecipient] = useState('');
+  useEffect(() => {
+    if (!showEditBeneficiaries && will) {
+      setDraftBeneficiaries(will.beneficiaries);
+    }
+  }, [showEditBeneficiaries, will]);
+
   const [reminderEmail, setReminderEmail] = useState('');
   const [reminderStatus, setReminderStatus] = useState<string | null>(null);
   const [reminderPending, setReminderPending] = useState(false);
@@ -126,11 +160,10 @@ export default function WillDetailPage() {
         return;
       }
       setWill(fetched);
-      setDraftBeneficiaries(fetched.beneficiaries);
       setLastFetchTime(new Date());
       // Only reset draft beneficiaries when the edit panel is not open,
       // otherwise in-progress edits would be silently overwritten.
-      if (!showEditBeneficiariesRef.current) {
+      if (shouldReplaceBeneficiaryDraft(showEditBeneficiariesRef.current)) {
         setDraftBeneficiaries(fetched.beneficiaries);
       }
       setError(null);
@@ -138,7 +171,8 @@ export default function WillDetailPage() {
       if (!isMounted.current) {
         return;
       }
-      setError(formatError(err));
+      console.error('Failed to load will', err);
+      setError(formatLoadError(err));
     } finally {
       if (isMounted.current) {
         setLoading(false);
@@ -151,11 +185,14 @@ export default function WillDetailPage() {
     try {
       const fetched = await getSoroWillClient().getWill(willId);
       setWill(fetched);
-      setDraftBeneficiaries(fetched.beneficiaries);
+      if (shouldReplaceBeneficiaryDraft(showEditBeneficiariesRef.current)) {
+        setDraftBeneficiaries(fetched.beneficiaries);
+      }
       setLastFetchTime(new Date());
       setError(null);
       toast.success('Data refreshed');
     } catch (err) {
+      console.error('[WillDetail] Failed to refresh will:', err);
       const message = formatError(err);
       setError(message);
       toast.error(message);
@@ -175,6 +212,19 @@ export default function WillDetailPage() {
   useEffect(() => {
     void refetch();
   }, [refetch]);
+
+  useEffect(() => {
+    setActivityHydratedFor(null);
+    setActivity(loadActivity(willId));
+    setActivityHydratedFor(willId);
+  }, [willId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || activityHydratedFor !== willId) return;
+
+    const stored = activity.map((entry) => ({ ...entry, at: entry.at.toISOString() }));
+    window.localStorage.setItem(activityStorageKey(willId), JSON.stringify(stored));
+  }, [activity, activityHydratedFor, willId]);
 
   function recordActivity(action: string, txHash: string) {
     setActivity((prev) => [{ action, txHash, at: new Date() }, ...prev]);
@@ -201,6 +251,7 @@ export default function WillDetailPage() {
     name: string,
     fn: () => Promise<{ txHash: string }>,
     errorMessage?: (err: unknown) => string,
+    onSuccess?: () => void,
   ) {
     setBusyAction(name);
     setError(null);
@@ -210,6 +261,7 @@ export default function WillDetailPage() {
       await refetch();
       const actionLabel = name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
       toast.success(`${actionLabel} successful`);
+      onSuccess?.();
     } catch (err) {
       const message = errorMessage ? errorMessage(err) : formatError(err);
       setError(message);
@@ -254,7 +306,7 @@ export default function WillDetailPage() {
   }
 
   // Quick client-side validation before hitting the RPC layer
-  if (!willId || /^\d+$/.test(willId) === false) {
+  if (!willId || !isValidWillId(willId)) {
     return (
       <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-8 text-center">
         <h1 className="text-lg font-semibold text-red-300">Invalid will ID</h1>
@@ -278,8 +330,17 @@ export default function WillDetailPage() {
   if (error && !will) {
     return (
       <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-8 text-center">
-        <h1 className="text-lg font-semibold text-red-300">Couldn&apos;t load this will</h1>
+        <h1 className="text-lg font-semibold text-red-300">
+          Could not load will — check your connection
+        </h1>
         <p className="mt-2 text-sm text-red-300/70">{error}</p>
+        <button
+          type="button"
+          onClick={() => void refetch()}
+          className="mt-4 rounded-full border border-red-400/40 px-4 py-2 text-sm text-red-300 transition hover:border-red-400/70"
+        >
+          Try again
+        </button>
       </div>
     );
   }
@@ -290,6 +351,7 @@ export default function WillDetailPage() {
 
   const isOwner = publicKey === will.owner;
   const isGuardian = !!publicKey && will.guardians.includes(publicKey);
+  const guardianHasVoted = isGuardian && (hasVoted || hasGuardianVoted(will.id, publicKey as string));
   const isBeneficiary = !!publicKey && will.beneficiaries.some((b) => b.address === publicKey);
   const role = isOwner ? 'Owner' : isGuardian ? 'Guardian' : isBeneficiary ? 'Beneficiary' : 'Viewing as guest';
   const client = getSoroWillClient();
@@ -353,7 +415,18 @@ export default function WillDetailPage() {
 
       <StatusBanner status={will.status} />
 
-      {error ? <p className="text-sm text-red-400 print-hide">{error}</p> : null}
+      {error ? (
+        <div className="flex items-center justify-between rounded-xl border border-red-500/30 bg-red-500/10 p-4 print-hide">
+          <p className="text-sm text-red-300/80">{error}</p>
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            className="rounded-full border border-red-400/40 px-3 py-1.5 text-xs text-red-300 transition hover:border-red-400/70"
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
 
       <div className="print-section grid gap-4 sm:grid-cols-2">
         <div className="rounded-xl border border-white/10 bg-white/5 p-4">
@@ -423,43 +496,35 @@ export default function WillDetailPage() {
           <>
             <button
               type="button"
-              onClick={() => setShowTopUp((s) => !s)}
+              onClick={() => { setError(null); setShowTopUp((s) => !s); }}
               className="w-full rounded-full border border-white/20 px-4 py-2 text-sm text-will-light/80 transition hover:border-white/40 sm:w-auto"
             >
               Top Up
             </button>
-            <button
-              type="button"
-              onClick={() => setShowEarlyRelease((s) => !s)}
-              className="w-full rounded-full border border-white/20 px-4 py-2 text-sm text-will-light/80 transition hover:border-white/40 sm:w-auto"
-              title="Coming soon: requires SDK support"
-            >
-              Release Early
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setShowEditBeneficiaries((s) => {
-                  const next = !s;
-                  showEditBeneficiariesRef.current = next;
-                  return next;
-                });
-              }}
-              className="w-full rounded-full border border-white/20 px-4 py-2 text-sm text-will-light/80 transition hover:border-white/40 sm:w-auto"
-            >
-              Update Beneficiaries
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setShowEditBeneficiaries((s) => {
+                    const next = !s;
+                    showEditBeneficiariesRef.current = next;
+                    return next;
+                  });
+                }}
+                className="w-full rounded-full border border-white/20 px-4 py-2 text-sm text-will-light/80 transition hover:border-white/40 sm:w-auto"
+              >
+                Update Beneficiaries
+              </button>
             <button
               type="button"
               onClick={() => router.push(`/will/new?cloneFrom=${will.id}`)}
               className="w-full rounded-full border border-white/20 px-4 py-2 text-sm text-will-light/80 transition hover:border-white/40 sm:w-auto"
-              title="Coming soon: requires SDK support"
             >
               Duplicate
             </button>
             <button
               type="button"
-              onClick={() => runAction('cancel_will', () => client.cancelWill(will.id))}
+              onClick={() => setShowCancelConfirm(true)}
               disabled={busyAction !== null}
               className="w-full rounded-full border border-red-400/40 px-4 py-2 text-sm text-red-300 transition hover:border-red-400/70 disabled:opacity-60 sm:w-auto"
             >
@@ -539,75 +604,21 @@ export default function WillDetailPage() {
         </form>
       ) : null}
 
-      {showEarlyRelease ? (
-        <div className="print-hide rounded-xl border border-will-purple/40 bg-will-purple/10 p-4">
-          <h3 className="text-sm font-semibold text-will-light">Release early to beneficiary</h3>
-          <div className="mt-3 space-y-3">
-            <div>
-              <label htmlFor="early-release-amount" className="text-xs text-will-light/70">
-                Amount (USDC)
-              </label>
-              <input
-                id="early-release-amount"
-                type="number"
-                min={0}
-                step="0.01"
-                value={earlyReleaseAmount}
-                onChange={(event) => {
-                  const val = event.target.value;
-                  if (val !== '' && Number(val) < 0) {
-                    setEarlyReleaseAmount('0');
-                  } else {
-                    setEarlyReleaseAmount(val);
-                  }
-                }}
-                placeholder="0.00"
-                className="mt-1 w-full rounded-lg border border-will-purple/30 bg-will-purple/5 px-3 py-2 text-sm text-will-light focus:border-will-purple focus:outline-none"
-              />
-            </div>
-            <div>
-              <label htmlFor="early-release-recipient" className="text-xs text-will-light/70">
-                Recipient address
-              </label>
-              <input
-                id="early-release-recipient"
-                type="text"
-                value={earlyReleaseRecipient}
-                onChange={(event) => setEarlyReleaseRecipient(event.target.value)}
-                placeholder="Stellar address (G...)"
-                className="mt-1 w-full rounded-lg border border-will-purple/30 bg-will-purple/5 px-3 py-2 font-mono text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none"
-              />
-            </div>
-            <p className="text-xs text-will-light/50">
-              Note: Partial early release requires SDK support (coming soon)
-            </p>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowEarlyRelease(false);
-                  setEarlyReleaseAmount('');
-                  setEarlyReleaseRecipient('');
-                }}
-                className="w-full rounded-full border border-white/20 px-4 py-2 text-sm text-will-light/80 transition hover:border-white/40 sm:w-auto"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
       {showEditBeneficiaries ? (
         <div className="print-hide space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
           <BeneficiaryForm value={draftBeneficiaries} onChange={setDraftBeneficiaries} />
           <button
             type="button"
             onClick={async () => {
-              await runAction('update_beneficiaries', () =>
-                client.updateBeneficiaries({ willId: will.id, beneficiaries: draftBeneficiaries }),
+              await runAction(
+                'update_beneficiaries',
+                () => client.updateBeneficiaries({ willId: will.id, beneficiaries: draftBeneficiaries }),
+                undefined,
+                () => {
+                  showEditBeneficiariesRef.current = false;
+                  setShowEditBeneficiaries(false);
+                },
               );
-              setShowEditBeneficiaries(false);
             }}
             disabled={busyAction !== null || !validateBeneficiaries(draftBeneficiaries) || !draftBeneficiaries.every((b) => b.address.trim() !== '')}
             className="rounded-full bg-will-purple px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
@@ -616,6 +627,18 @@ export default function WillDetailPage() {
           </button>
         </div>
       ) : null}
+
+      <DestructiveActionConfirmation
+        isOpen={showCancelConfirm}
+        action="cancel_will"
+        willId={will.id}
+        confirmationType="willId"
+        onCancel={() => setShowCancelConfirm(false)}
+        onConfirm={() => {
+          setShowCancelConfirm(false);
+          void runAction('cancel_will', () => client.cancelWill(will.id));
+        }}
+      />
 
       <div className="print-section rounded-xl border border-white/10 bg-white/5 p-4">
         <h2 className="text-sm font-semibold text-will-light print-heading">Beneficiaries</h2>
@@ -656,11 +679,20 @@ export default function WillDetailPage() {
           isGuardian={isGuardian}
           isActive={will.status === WillStatus.Active}
           isCastingVote={castingVoteId === will.id}
+          hasVoted={guardianHasVoted}
           onCastVote={() => {
             setCastingVoteId(will.id);
-            void runAction('cast_guardian_vote', () => client.guardianTrigger(will.id), getGuardianVoteErrorMessage).finally(
-              () => setCastingVoteId(null),
-            );
+            void runAction(
+              'cast_guardian_vote',
+              () => client.guardianTrigger(will.id),
+              getGuardianVoteErrorMessage,
+              () => {
+                if (publicKey) {
+                  markGuardianVoted(will.id, publicKey);
+                  setHasVoted(true);
+                }
+              },
+            ).finally(() => setCastingVoteId(null));
           }}
           error={error}
         />
@@ -671,7 +703,7 @@ export default function WillDetailPage() {
         {activity.length === 0 ? (
           <div className="mt-2 flex items-center gap-2 text-sm text-will-light/60">
             <span>📋</span>
-            <p>No actions taken yet this session.</p>
+            <p>No actions recorded yet.</p>
           </div>
         ) : (
           <ul className="mt-2 space-y-2">
