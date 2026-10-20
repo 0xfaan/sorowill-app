@@ -16,11 +16,19 @@ vi.mock('viem', () => ({ verifyMessage: vi.fn(async () => true) }));
 import { POST } from '@/app/api/reminders/register/route';
 import { checkRateLimit, resetRateLimits } from '@/lib/rate-limit';
 
+const VALID_WILL_ID = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
+
 function makeRequest(ip: string, email = 'a@example.com'): Request {
   return new Request('https://app.example.com/api/reminders/register', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-forwarded-for': `${ip}, 10.0.0.1` },
-    body: JSON.stringify({ willId: 'w1', email, owner: '0xabc', signature: '0xsig', message: 'm' }),
+    body: JSON.stringify({
+      willId: VALID_WILL_ID,
+      email,
+      owner: '0xabc',
+      signature: '0xsig',
+      message: 'm',
+    }),
   });
 }
 
