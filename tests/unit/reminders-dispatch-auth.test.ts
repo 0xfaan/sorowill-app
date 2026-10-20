@@ -19,9 +19,24 @@ describe('POST /api/reminders/dispatch auth (#281)', () => {
   });
 
   it('accepts the exact bearer token', async () => {
-    vi.stubEnv('CRON_SECRET', 's3cret');
-    const res = await POST(request('Bearer s3cret'));
+    const secret = 'a'.repeat(32);
+    vi.stubEnv('CRON_SECRET', secret);
+    const res = await POST(request(`Bearer ${secret}`));
     expect(res.status).toBe(200);
+  });
+
+  it('warns when CRON_SECRET is too short but still enforces auth', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubEnv('CRON_SECRET', 's3cret');
+
+    const ok = await POST(request('Bearer s3cret'));
+    expect(ok.status).toBe(200);
+    expect(warn).toHaveBeenCalled();
+
+    const bad = await POST(request('Bearer wrong'));
+    expect(bad.status).toBe(401);
+
+    warn.mockRestore();
   });
 
   it.each([

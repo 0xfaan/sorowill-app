@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { resolveFederatedAddress } from '@/lib/federated';
+import { resolveFederatedAddress, FEDERATION_DOMAIN } from '@/lib/federated';
 
 // ---------------------------------------------------------------------------
 // Helpers

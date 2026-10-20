@@ -12,6 +12,20 @@ const STELLAR_TOML_CACHE = new Map<string, { toml: string; expiresAt: number }>(
 const STELLAR_PUBLIC_KEY_REGEX = /^G[A-Z2-7]{55}$/;
 
 /**
+ * The trusted federation resolver domain.
+ *
+ * Trust model: this domain is the single source of truth for the host that
+ * federation lookups are performed against. All stellar.toml fetches and
+ * federation server queries are scoped to this domain, so it must never be
+ * hardcoded inline elsewhere — changing it here is the only supported way to
+ * point the app at a different resolver. Keeping it as one exported constant
+ * ensures a domain change cannot silently route lookups to the wrong resolver.
+ *
+ * (#679)
+ */
+export const FEDERATION_DOMAIN = 'stellar.org';
+
+/**
  * Strict hostname validator for the domain portion of a federated address.
  *
  * Rejects anything that contains characters that could alter the URL target:
@@ -121,9 +135,9 @@ export async function resolveFederatedAddress(address: string): Promise<string> 
     let stellarToml = cached && cached.expiresAt > Date.now() ? cached.toml : undefined;
 
     if (!stellarToml) {
-      const tomlResponse = await fetch(`https://${domain}/.well-known/stellar.toml`);
+      const tomlResponse = await fetch(`https://${FEDERATION_DOMAIN}/.well-known/stellar.toml`);
       if (!tomlResponse.ok) {
-        throw new Error(`Failed to fetch stellar.toml from ${domain}`);
+        throw new Error(`Failed to fetch stellar.toml from ${FEDERATION_DOMAIN}`);
       }
       stellarToml = await tomlResponse.text();
       STELLAR_TOML_CACHE.set(domain, {
@@ -146,7 +160,7 @@ export async function resolveFederatedAddress(address: string): Promise<string> 
         /^\s*FEDERATION_SERVER\s*=/.test(line));
 
     if (!federationServerLine) {
-      throw new Error(`No FEDERATION_SERVER found in ${domain}/.well-known/stellar.toml`);
+      throw new Error(`No FEDERATION_SERVER found in ${FEDERATION_DOMAIN}/.well-known/stellar.toml`);
     }
 
     // Take everything after the first `=` so embedded `=` characters in
@@ -170,7 +184,7 @@ export async function resolveFederatedAddress(address: string): Promise<string> 
     }
 
     const params = new URLSearchParams({
-      q: `${name}*${domain}`,
+      q: `${name}*${FEDERATION_DOMAIN}`,
       type: 'name',
     });
 

@@ -52,6 +52,23 @@ describe('GET /api/reminders/dispatch', () => {
   });
 
   it('dispatches reminder emails when the bearer token matches', async () => {
+    const secret = 'a'.repeat(32);
+    process.env.CRON_SECRET = secret;
+    mockDispatchDueReminders.mockResolvedValue({ sent: 0, skipped: 0, errors: [] });
+
+    const request = new Request('http://localhost/api/reminders/dispatch', {
+      method: 'GET',
+      headers: { authorization: `Bearer ${secret}` },
+    });
+
+    const response = await GET(request);
+
+    expect(response.status).toBe(200);
+    expect(mockDispatchDueReminders).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns when CRON_SECRET is shorter than the minimum length but still authenticates', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     process.env.CRON_SECRET = 'super-secret';
     mockDispatchDueReminders.mockResolvedValue({ sent: 0, skipped: 0, errors: [] });
 
@@ -64,5 +81,28 @@ describe('GET /api/reminders/dispatch', () => {
 
     expect(response.status).toBe(200);
     expect(mockDispatchDueReminders).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalled();
+
+    warnSpy.mockRestore();
+  });
+
+  it('does not warn when CRON_SECRET meets the minimum length', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const secret = 'b'.repeat(32);
+    process.env.CRON_SECRET = secret;
+    mockDispatchDueReminders.mockResolvedValue({ sent: 0, skipped: 0, errors: [] });
+
+    const request = new Request('http://localhost/api/reminders/dispatch', {
+      method: 'GET',
+      headers: { authorization: `Bearer ${secret}` },
+    });
+
+    const response = await GET(request);
+
+    expect(response.status).toBe(200);
+    expect(mockDispatchDueReminders).toHaveBeenCalledTimes(1);
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    warnSpy.mockRestore();
   });
 });

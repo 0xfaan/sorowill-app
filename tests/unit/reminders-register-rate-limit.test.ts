@@ -55,3 +55,40 @@ describe('#399 — IP rate limiting on reminder registration', () => {
     expect(checkRateLimit('k', 10, 1000, now + 1000).allowed).toBe(true);
   });
 });
+
+describe('#680 — rate-limit key construction avoids collisions', () => {
+  it('gives distinct windows to IPv6 addresses that contain colons', () => {
+    const now = 1_000_000;
+    const ipA = '2001:db8::1';
+    const ipB = '2001:db8::2';
+
+    for (let i = 0; i < 5; i++) {
+      expect(checkRateLimit(`reminders:register:${ipA}`, 5, 1000, now).allowed).toBe(true);
+    }
+    // ipA is now exhausted...
+    expect(checkRateLimit(`reminders:register:${ipA}`, 5, 1000, now).allowed).toBe(false);
+    // ...but ipB must still have its own independent window.
+    expect(checkRateLimit(`reminders:register:${ipB}`, 5, 1000, now).allowed).toBe(true);
+  });
+
+  it('does not collide when parts contain the separator character', () => {
+    const now = 1_000_000;
+    // Naive concatenation with ':' would make these two keys identical:
+    //   'a:b' + ':' + 'c'  ===  'a' + ':' + 'b:c'
+    const key1 = buildRateLimitKey(['a:b', 'c']);
+    const key2 = buildRateLimitKey(['a', 'b:c']);
+    expect(key1).not.toBe(key2);
+
+    for (let i = 0; i < 3; i++) {
+      expect(checkRateLimit(key1, 3, 1000, now).allowed).toBe(true);
+    }
+    expect(checkRateLimit(key1, 3, 1000, now).allowed).toBe(false);
+    expect(checkRateLimit(key2, 3, 1000, now).allowed).toBe(true);
+  });
+
+  it('validates that the separator does not appear in any key part', () => {
+    expect(() => buildRateLimitKey(['a:b', 'c'], ':')).toThrow();
+    expect(() => buildRateLimitKey(['a', 'b:c'], ':')).toThrow();
+    expect(() => buildRateLimitKey(['a', 'b'], ':')).not.toThrow();
+  });
+});
