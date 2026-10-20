@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { rejectUnsupportedContentType } from '@/lib/contentType';
-import { unsubscribeReminderSubscription } from '@/lib/reminders';
+import { escapeHtml, unsubscribeReminderSubscription } from '@/lib/reminders';
 
 async function handleUnsubscribe(request: Request) {
   const url = new URL(request.url);
@@ -39,7 +39,7 @@ async function handleUnsubscribe(request: Request) {
       : result.error || 'Could not process unsubscribe request.';
 
     return new NextResponse(
-      `<!doctype html><html><body style="font-family: sans-serif; padding: 2rem;"><p>${message}</p></body></html>`,
+      `<!doctype html><html><body style="font-family: sans-serif; padding: 2rem;"><p>${escapeHtml(message)}</p></body></html>`,
       {
         status: result.ok ? 200 : 400,
         headers: { 'Content-Type': 'text/html; charset=utf-8' },
