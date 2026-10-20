@@ -17,6 +17,18 @@ function isValidStellarAddress(address: string): boolean {
   return /^G[0-9A-Z]{55}$/.test(address);
 }
 
+/**
+ * The SDK's `Beneficiary.percentage` field is typed as `number`, but some
+ * SDK versions/boundaries (e.g. values round-tripped through Soroban
+ * contract calls) may hand back a `bigint` instead. Converting at this
+ * single boundary keeps the rest of the component's arithmetic (which
+ * relies on fractional `number` math) safe regardless of which type the
+ * SDK actually sends.
+ */
+export function toPercentageNumber(percentage: Beneficiary['percentage'] | bigint): number {
+  return typeof percentage === 'bigint' ? Number(percentage) : percentage;
+}
+
 function getAddressErrors(beneficiaries: Beneficiary[]): Record<number, string> {
   const errors: Record<number, string> = {};
   beneficiaries.forEach((b, i) => {
@@ -46,12 +58,12 @@ function equalSplit(count: number): number[] {
  * hundredths here keeps the form's arithmetic identical to that encoding and
  * free of floating-point drift (e.g. 33.33 + 33.33 + 33.34).
  */
-function toHundredths(percentage: number): number {
-  return Math.round(percentage * 100);
+function toHundredths(percentage: Beneficiary['percentage'] | bigint): number {
+  return Math.round(toPercentageNumber(percentage) * 100);
 }
 
-function hasAtMostTwoDecimals(percentage: number): boolean {
-  return Math.abs(percentage * 100 - toHundredths(percentage)) < 1e-6;
+function hasAtMostTwoDecimals(percentage: Beneficiary['percentage'] | bigint): boolean {
+  return Math.abs(toPercentageNumber(percentage) * 100 - toHundredths(percentage)) < 1e-6;
 }
 
 function sumPercentages(beneficiaries: Beneficiary[]): number {
@@ -86,7 +98,7 @@ function getBeneficiaryValidationMessage(beneficiaries: Beneficiary[]): string |
   if (hasNonInteger) {
     // The SDK only encodes whole percentages; show what rounding each share
     // would produce so the user sees the distribution actually changes.
-    const rounded = beneficiaries.map((b) => Math.round(b.percentage));
+    const rounded = beneficiaries.map((b) => Math.round(toPercentageNumber(b.percentage)));
     const roundedTotal = rounded.reduce((sum, p) => sum + p, 0);
     return `Percentages must be whole numbers (e.g. 33, not 33.5) — rounding would give ${rounded
       .map((p) => `${p}%`)
