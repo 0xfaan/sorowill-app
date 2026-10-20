@@ -2,6 +2,8 @@
 
 import { ReactNode, useCallback, useEffect, useState } from 'react';
 
+import { generateClientId } from '@/lib/willId';
+
 export type ToastVariant = 'success' | 'error' | 'info';
 
 export interface Toast {
@@ -24,7 +26,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const addToast = useCallback((message: string, variant: ToastVariant) => {
-    const id = Math.random().toString(36).slice(2);
+    const id = generateClientId();
     const toast: Toast = { id, message, variant };
     // Auto-dismiss is owned entirely by ToastItem's useEffect, which cleans up
     // its timer on unmount / id change. Scheduling one here as well would leave
