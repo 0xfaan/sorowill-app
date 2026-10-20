@@ -33,7 +33,7 @@ export async function safeConnectWallet(): Promise<WalletConnection> {
 
 /**
  * SSR-safe wrapper around `getPublicKey`. Resolves `null` during server-side
- * rendering or if no wallet is currently connected, instead of throwing —
+ * rendering or if no wallet is currently connected, instead of throwing â€”
  * convenient for "is a wallet already connected?" checks on mount.
  */
 export async function safeGetPublicKey(): Promise<string | null> {
@@ -51,6 +51,12 @@ export async function safeGetPublicKey(): Promise<string | null> {
  * SSR-safe wrapper around the Freighter API's `getNetwork`. Resolves
  * with the wallet's currently selected network and passphrase, or null
  * if Freighter is not installed, not connected, or called during SSR.
+ *
+ * `@stellar/freighter-api` is a direct dependency (declared in
+ * package.json) so this import is guaranteed to resolve at build time.
+ * It is loaded dynamically to keep extension-specific code out of the
+ * server bundle and only pull it in when this function is called in
+ * the browser.
  */
 export async function safeGetWalletNetwork(): Promise<{
   network: string;
@@ -60,7 +66,6 @@ export async function safeGetWalletNetwork(): Promise<{
     return null;
   }
   try {
-    // Dynamic import: @stellar/freighter-api is a transitive dep of @sorowill/sdk
     const { isConnected, getNetwork: getFreighterNetwork } = await import(
       '@stellar/freighter-api'
     );
@@ -78,7 +83,16 @@ export async function safeGetWalletNetwork(): Promise<{
   }
 }
 
-/** Truncates a Stellar address for display, e.g. `GABC...WXYZ`. */
+/**
+ * Truncates a Stellar address for display, e.g. `GABC...WXYZ`.
+ *
+ * This helper is Stellar-address-specific: real callers only ever pass a
+ * Stellar public key, which is always exactly 56 characters (`G` followed by
+ * 55 base32 characters). The `length <= 12` short-circuit below is therefore a
+ * defensive no-op for hypothetical non-Stellar input â€” it is unreachable for
+ * real Stellar addresses, but kept so the function degrades gracefully rather
+ * than producing a nonsensical `slice` result for short strings.
+ */
 export function truncateAddress(address: string): string {
   if (address.length <= 12) {
     return address;

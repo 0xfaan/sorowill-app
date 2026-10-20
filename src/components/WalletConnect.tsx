@@ -17,6 +17,55 @@ import { formatError } from '@/lib/errors';
 // flag below stops safeGetPublicKey() from silently reconnecting on the next
 // mount within the same tab session.
 const DISCONNECTED_KEY = 'sorowill:wallet-cleared';
+const BROADCAST_CHANNEL_NAME = 'wallet_state';
+
+// There is no auth token here: the "session" is the connected public key we
+// hold in state. It goes stale when Freighter locks, switches account or
+// revokes access, so it is re-validated periodically and capped at a max age,
+// after which the user must reconnect explicitly.
+const CONNECTED_AT_KEY = 'sorowill:wallet-connected-at';
+export const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+export const SESSION_CHECK_INTERVAL_MS = 30_000;
+export const SESSION_EXPIRED_MESSAGE = 'Session expired. Please reconnect your wallet.';
+
+type ErrorType = 'not_installed' | 'user_declined' | 'session_expired' | 'generic';
+
+interface ErrorInfo {
+  type: ErrorType;
+  message: string;
+}
+
+export function classifyError(err: unknown): ErrorInfo {
+  const rawMessage = err instanceof Error ? err.message : 'Failed to connect wallet';
+  const message = formatError(err);
+
+  // Declined is checked first: a rejection message can also mention Freighter.
+  if (
+    rawMessage.includes('declined') ||
+    rawMessage.includes('denied') ||
+    rawMessage.includes('rejected')
+  ) {
+    return { type: 'user_declined', message };
+  }
+  // Only an explicit "not installed" means the extension is missing; broad
+  // matches such as 'not found' misreport RPC errors like 'Account not found'.
+  if (rawMessage.includes('not installed')) {
+    return { type: 'not_installed', message };
+  }
+  return { type: 'generic', message };
+}
+
+/**
+ * Returns a channel for cross-tab wallet sync, or `null` where BroadcastChannel
+ * is unavailable (SSR, Safari < 15.4, some webviews). Callers then fall back
+ * to single-tab behaviour instead of throwing.
+ */
+function openWalletChannel(): BroadcastChannel | null {
+  if (typeof BroadcastChannel === 'undefined') {
+    return null;
+  }
+  return new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+}
 
 function isSessionCleared(): boolean {
   if (typeof window === 'undefined') {
@@ -36,10 +85,34 @@ function setSessionCleared(cleared: boolean): void {
   }
 }
 
+export function isSessionExpired(connectedAt: number | null, now: number = Date.now()): boolean {
+  return connectedAt !== null && now - connectedAt >= SESSION_MAX_AGE_MS;
+}
+
+function getConnectedAt(): number | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const raw = window.sessionStorage.getItem(CONNECTED_AT_KEY);
+  const value = raw === null ? NaN : Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function setConnectedAt(value: number | null): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (value === null) {
+    window.sessionStorage.removeItem(CONNECTED_AT_KEY);
+  } else {
+    window.sessionStorage.setItem(CONNECTED_AT_KEY, String(value));
+  }
+}
+
 export function WalletConnect() {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ErrorInfo | null>(null);
 
   const isMounted = useRef(true);
 
@@ -50,15 +123,79 @@ export function WalletConnect() {
     };
   }, []);
 
+  function expireSession() {
+    setSessionCleared(true);
+    setConnectedAt(null);
+    setPublicKey(null);
+    setError({ type: 'session_expired', message: SESSION_EXPIRED_MESSAGE });
+  }
+
   useEffect(() => {
     if (isSessionCleared()) {
       return;
     }
+    if (isSessionExpired(getConnectedAt())) {
+      expireSession();
+      return;
+    }
     void safeGetPublicKey().then((key) => {
       if (isMounted.current) {
+        if (key && getConnectedAt() === null) {
+          setConnectedAt(Date.now());
+        }
         setPublicKey(key);
       }
     });
+  }, []);
+
+  // Re-validate the session while connected: expire it once it outlives
+  // SESSION_MAX_AGE_MS or the wallet no longer reports the same account.
+  useEffect(() => {
+    if (!publicKey) return;
+
+    let cancelled = false;
+    const check = async () => {
+      if (isSessionExpired(getConnectedAt())) {
+        expireSession();
+        return;
+      }
+      const current = await safeGetPublicKey();
+      if (!cancelled && isMounted.current && current !== publicKey) {
+        expireSession();
+      }
+    };
+    const id = setInterval(() => void check(), SESSION_CHECK_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [publicKey]);
+
+  useEffect(() => {
+    const channel = openWalletChannel();
+    if (!channel) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      const { type, publicKey: incomingKey } = event.data;
+
+      if (type === 'wallet_connected' && incomingKey) {
+        setSessionCleared(false);
+        setConnectedAt(Date.now());
+        setError(null);
+        setPublicKey(incomingKey);
+      } else if (type === 'wallet_disconnected') {
+        setConnectedAt(null);
+        setPublicKey(null);
+      }
+    };
+
+    channel.addEventListener('message', handleMessage);
+
+    return () => {
+      channel.removeEventListener('message', handleMessage);
+      channel.close();
+    };
   }, []);
 
   async function handleConnect() {
@@ -67,18 +204,37 @@ export function WalletConnect() {
     setSessionCleared(false);
     try {
       const connection = await safeConnectWallet();
+      setConnectedAt(Date.now());
       setPublicKey(connection.publicKey);
+
+      const channel = openWalletChannel();
+      if (channel) {
+        channel.postMessage({
+          type: 'wallet_connected',
+          publicKey: connection.publicKey,
+        });
+        channel.close();
+      }
     } catch (err) {
-      setError(err instanceof Error ? formatError(err) : 'Failed to connect wallet');
+      setError(classifyError(err));
     } finally {
       setConnecting(false);
     }
   }
 
-  function handleDisconnect() {
+  function handleClearSession() {
     setSessionCleared(true);
+    setConnectedAt(null);
     setPublicKey(null);
     setError(null);
+
+    const channel = openWalletChannel();
+    if (channel) {
+      channel.postMessage({
+        type: 'wallet_disconnected',
+      });
+      channel.close();
+    }
   }
 
   if (publicKey) {
@@ -108,7 +264,25 @@ export function WalletConnect() {
       >
         {connecting ? 'Connecting…' : 'Connect Wallet'}
       </button>
-      {error ? <span className="text-xs text-red-400">{error}</span> : null}
+      {error ? (
+        <div className="max-w-xs text-right text-xs text-red-400">
+          {error.type === 'not_installed' ? (
+            <>
+              <p className="mb-1">Freighter wallet not installed. Install it to continue.</p>
+              <a
+                href="https://www.freighter.app"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-red-300 underline hover:text-red-200"
+              >
+                Install Freighter
+              </a>
+            </>
+          ) : (
+            <p>{error.message}</p>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 export interface ShortcutConfig {
   newWill?: string;
@@ -15,54 +15,44 @@ export interface UseKeyboardShortcutsProps {
   shortcuts?: ShortcutConfig;
 }
 
-export function useKeyboardShortcuts({
-  onNewWill,
-  onSearch,
-  onHelp,
-  shortcuts = {},
-}: UseKeyboardShortcutsProps) {
+export function useKeyboardShortcuts(props: UseKeyboardShortcutsProps) {
+  const { onNewWill, onSearch, onHelp, shortcuts } = props;
+
+  const latestRef = useRef<UseKeyboardShortcutsProps>(props);
+  latestRef.current = { onNewWill, onSearch, onHelp, shortcuts };
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      const { onNewWill: newWill, onSearch: search, onHelp: help, shortcuts: keys = {} } = latestRef.current;
+
       // Check if modifier keys are pressed (excluding Shift, which is needed for '?')
       if (event.ctrlKey || event.altKey || event.metaKey) {
         return;
       }
 
-      // Check if focused element is an input, textarea, or contenteditable
-      const activeEl = document.activeElement;
-      if (activeEl) {
-        const tagName = activeEl.tagName.toLowerCase();
-        const contentEditableAttr = activeEl.getAttribute('contenteditable');
-        const isContentEditable =
-          contentEditableAttr === 'true' ||
-          contentEditableAttr === '' ||
-          (activeEl as any).contentEditable === 'true' ||
-          (activeEl as any).contentEditable === true ||
-          (activeEl as any).isContentEditable === true;
-
-        if (
-          tagName === 'input' ||
-          tagName === 'textarea' ||
-          isContentEditable
-        ) {
-          return;
-        }
+      // Don't trigger shortcuts when typing in input/textarea/contenteditable
+      const activeElement = document.activeElement as HTMLElement;
+      if (
+        activeElement instanceof HTMLInputElement ||
+        activeElement instanceof HTMLTextAreaElement ||
+        (activeElement instanceof HTMLElement && activeElement.contentEditable === 'true')
+      ) {
+        return;
       }
 
-      // Define default keys and overrides
-      const keyNewWill = shortcuts.newWill || 'n';
-      const keySearch = shortcuts.search || '/';
-      const keyHelp = shortcuts.help || '?';
+      const keyNewWill = keys.newWill || 'n';
+      const keySearch = keys.search || '/';
+      const keyHelp = keys.help || '?';
 
-      if (event.key === keyNewWill && onNewWill) {
+      if (event.key === keyNewWill && newWill) {
         event.preventDefault();
-        onNewWill();
-      } else if (event.key === keySearch && onSearch) {
+        newWill();
+      } else if (event.key === keySearch && search) {
         event.preventDefault();
-        onSearch();
-      } else if (event.key === keyHelp && onHelp) {
+        search();
+      } else if (event.key === keyHelp && help) {
         event.preventDefault();
-        onHelp();
+        help();
       }
     }
 
@@ -70,5 +60,5 @@ export function useKeyboardShortcuts({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [onNewWill, onSearch, onHelp, shortcuts]);
+  }, []);
 }

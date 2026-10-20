@@ -1,7 +1,18 @@
 import { type Will } from '@sorowill/sdk';
+import { isWillNotFoundMessage } from '@/lib/errors';
 
 export function nextCheckinDeadline(will: Will): Date {
   return new Date(will.lastCheckin.getTime() + will.checkinPeriodDays * 86_400 * 1000);
+}
+
+/**
+ * Shared check-in deadline helper. `reminders.ts` previously defined its own
+ * private `buildDeadline(will)` with the exact same formula; it now imports
+ * this helper so reminder emails quote the same deadline the rest of the app
+ * displays.
+ */
+export function buildDeadline(will: Will): Date {
+  return nextCheckinDeadline(will);
 }
 
 export function graceDeadline(will: Will): Date | null {
@@ -21,11 +32,7 @@ export function categorizeWillError(err: unknown): WillErrorCode {
   const message = err instanceof Error ? err.message : String(err);
   const normalized = message.toLowerCase();
 
-  if (
-    normalized.includes('not found') ||
-    normalized.includes('does not exist') ||
-    normalized.includes('no such will')
-  ) {
+  if (isWillNotFoundMessage(message)) {
     return WillErrorCode.NotFound;
   }
 
@@ -85,9 +92,12 @@ export function formatCheckinLabel(secondsLeft: number): string {
     if (hours > 0) {
       return `Check-in due in ${hours}h ${minutes}m`;
     }
-    return `Check-in due in ${minutes}m`;
+    if (minutes > 0) {
+      return `Check-in due in ${minutes}m`;
+    }
+    return 'Check-in due in under 1m';
   }
 
-  const daysLeft = Math.ceil(secondsLeft / 86_400);
+  const daysLeft = Math.floor(secondsLeft / 86_400);
   return `Check-in due in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`;
 }

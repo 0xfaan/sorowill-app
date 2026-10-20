@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { calculateShares, formatUSDC, getTimeUntilCheckin, WillStatus, type Will } from '@sorowill/sdk';
 
 import { formatCheckinLabel } from '@/lib/deadlines';
+import { getSafeBalance } from '@/lib/tokenDecimals';
 import { StatusBanner } from './StatusBanner';
 
 export interface WillCardProps {
@@ -36,10 +37,8 @@ export function WillCard({
 
   // Compute grace period deadline countdown for Triggered status
   const graceSecondsLeft = (() => {
-    if (will.status !== WillStatus.Triggered) return 0;
-    const graceEndMs = will.triggerTime
-      ? will.triggerTime.getTime() + (will.gracePeriodDays ?? 7) * 86_400 * 1000
-      : will.lastCheckin.getTime() + ((will.checkinPeriodDays ?? 90) + (will.gracePeriodDays ?? 7)) * 86_400 * 1000;
+    if (will.status !== WillStatus.Triggered || !will.triggerTime) return 0;
+    const graceEndMs = will.triggerTime.getTime() + (will.gracePeriodDays ?? 7) * 86_400 * 1000;
     return Math.max(0, Math.ceil((graceEndMs - Date.now()) / 1000));
   })();
   const graceDaysLeft = Math.ceil(graceSecondsLeft / 86_400);
@@ -48,7 +47,7 @@ export function WillCard({
   const userShare = (() => {
     if (!showEntitledShare || !connectedAddress || !will.beneficiaries?.length) return null;
     try {
-      const shares = calculateShares(will.balance, will.beneficiaries);
+      const shares = calculateShares(getSafeBalance(will.balance), will.beneficiaries);
       return shares.find(
         (s) => s.address.toLowerCase() === connectedAddress.toLowerCase(),
       );
@@ -60,7 +59,7 @@ export function WillCard({
   return (
     <article
       className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/5 p-4 transition hover:border-will-purple/40 sm:flex-row sm:items-center sm:justify-between"
-      aria-label={`Will #${will.id}, ${formatUSDC(BigInt(will.balance))} USDC`}
+      aria-label={`Will #${will.id}, ${formatUSDC(getSafeBalance(will.balance))} USDC`}
     >
       <div className="min-w-0 space-y-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -71,12 +70,12 @@ export function WillCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-will-light/70">
-          <span>{formatUSDC(BigInt(will.balance))} USDC locked</span>
+          <span>{formatUSDC(getSafeBalance(will.balance))} USDC locked</span>
           {userShare ? (
             <>
               <span className="text-will-light/40">•</span>
               <span className="font-medium text-indigo-300">
-                Your share: {formatUSDC(BigInt(userShare.share))} USDC ({userShare.percentage}%)
+                Your share: {formatUSDC(BigInt(userShare.share))} USDC
               </span>
             </>
           ) : null}

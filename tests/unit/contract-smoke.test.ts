@@ -16,12 +16,12 @@ function createMockClient(): SoroWillClient {
     id: '42',
     owner: 'GDBRZV77PZDK7LRBXEUPZNGJNQLFQKAZD6PKS7JFAZAKU4H3FDON4JL4',
     token: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4',
-    balance: BigInt(100_000_000), // 100 USDC
+    balance: '100000000', // 100 USDC
     beneficiaries: [
       { address: 'GDSWYNUBEHPVKWC3Q5CYRG6QZIMGR5P5ZRYSRZBCRN2VHQY7Z67HFCEF', percentage: 100 },
     ],
     guardians: [],
-    guardianVotes: [],
+    guardianVotes: 0,
     status: 'Active' as WillStatus,
     lastCheckin: new Date('2025-01-01'),
     checkinPeriodDays: 90,
@@ -50,7 +50,7 @@ describe('SoroWillClient read path smoke test', () => {
     expect(will.owner).toMatch(/^G[A-Z2-7]{55}$/);
     expect(will.beneficiaries).toBeInstanceOf(Array);
     expect(will.beneficiaries.length).toBeGreaterThan(0);
-    expect(typeof will.balance).toBe('bigint');
+    expect(typeof will.balance).toBe('string');
   });
 
   it('getWillsByOwner returns a list of wills for a given owner', async () => {

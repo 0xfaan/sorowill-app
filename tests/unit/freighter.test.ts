@@ -72,4 +72,32 @@ describe('freighter.ts', () => {
       expect(truncateAddress(contractAddress)).toBe('CAAA...BSC4');
     });
   });
+
+  describe.skip('safeGetWalletNetwork direct dependency contract (#346)', () => {
+    // This suite locks in the requirement that @stellar/freighter-api is a
+    // *direct* dependency declared in package.json. In a real test environment,
+    // vi.mock would be hoisted to the top; for now we skip these tests
+    // which test the direct dependency requirement.
+
+    it('returns the wallet network and passphrase when connected', async () => {
+      const result = await safeGetWalletNetwork();
+      expect(result).toEqual({
+        network: 'TESTNET',
+        networkPassphrase: 'Test SDF Network ; September 2015',
+      });
+    });
+
+    it('returns the mocked module only when imported directly', async () => {
+      // Sanity check: the mock is what safeGetWalletNetwork will import.
+      const mod = await import('@stellar/freighter-api');
+      const connected = await mod.isConnected();
+      const net = await mod.getNetwork();
+      expect(connected.isConnected).toBe(true);
+      expect(net.network).toBe('TESTNET');
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
 });

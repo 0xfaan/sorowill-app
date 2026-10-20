@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isTopUpAmountValid } from '@/app/will/[id]/page';
+import { isTopUpAmountValid } from '@/lib/amount';
 
 describe('Top Up Amount Format Validation', () => {
   it('rejects empty or whitespace inputs', () => {
@@ -17,6 +17,11 @@ describe('Top Up Amount Format Validation', () => {
     expect(isTopUpAmountValid('0.00')).toBe(false);
     expect(isTopUpAmountValid('-5')).toBe(false);
     expect(isTopUpAmountValid('-0.01')).toBe(false);
+  });
+
+  it('rejects non-finite values like "Infinity" and "1e309"', () => {
+    expect(isTopUpAmountValid('Infinity')).toBe(false);
+    expect(isTopUpAmountValid('1e309')).toBe(false);
   });
 
   it('accepts valid positive numbers', () => {

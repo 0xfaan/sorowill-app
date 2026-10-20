@@ -1,9 +1,26 @@
 'use client';
 
-import { useTheme } from './ThemeProvider';
+import { useOptionalTheme } from './ThemeProvider';
 
 export function ThemeToggle() {
-  const { theme, toggleTheme } = useTheme();
+  const themeContext = useOptionalTheme();
+
+  // Rendered outside a ThemeProvider (or before it is available): show an inert
+  // placeholder instead of throwing and taking the whole header down.
+  if (!themeContext) {
+    return (
+      <button
+        type="button"
+        disabled
+        aria-label="Theme loading"
+        className="rounded-lg border border-white/20 px-3 py-2 text-sm text-will-light/40"
+      >
+        —
+      </button>
+    );
+  }
+
+  const { theme, toggleTheme } = themeContext;
 
   return (
     <button

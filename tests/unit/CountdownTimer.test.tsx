@@ -14,11 +14,16 @@ function getCountdownText(): string {
 
 describe('CountdownTimer', () => {
   it('renders the countdown in DD:HH:MM:SS format', () => {
-    // Add a generous buffer so the test doesn't flake on a slow render:
-    // 1 day + 1 hour + 1 minute + 1.5 seconds  → rounds to 01:01:01:01
-    const future = new Date(Date.now() + 86_400_000 + 3_600_000 + 60_000 + 1_500);
+    // The component floors elapsed time to whole seconds, so asserting an
+    // exact seconds value is inherently flaky: any render/test-harness delay
+    // between capturing `future` and the first computeSeconds() call shifts
+    // the displayed seconds down by however long that took. Days/hours/
+    // minutes are stable against a few seconds of delay, so only those are
+    // asserted exactly; seconds is checked against the DD:HH:MM:SS shape.
+    const future = new Date(Date.now() + 86_400_000 + 3_600_000 + 60_000 + 30_000);
     render(<CountdownTimer deadline={future} />);
-    expect(getCountdownText()).toBe('01:01:01:01');
+    const text = getCountdownText();
+    expect(text).toMatch(/^01:01:01:\d{2}$/);
   });
 
   it('shows overdue when deadline is in the past', () => {
@@ -76,5 +81,47 @@ describe('CountdownTimer', () => {
     render(<CountdownTimer deadline={past} />);
     const span = screen.getByText(/overdue/i);
     expect(span.className).toContain('text-red-400');
+  });
+
+  it('stops interval once deadline has passed (#195)', () => {
+    vi.useFakeTimers();
+    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
+    const future = new Date(Date.now() + 2000);
+    render(<CountdownTimer deadline={future} />);
+
+    // Advance timer past 0
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(screen.getByText(/overdue/i)).toBeInTheDocument();
+    expect(clearIntervalSpy).toHaveBeenCalled();
+
+    clearIntervalSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('pauses countdown when document is hidden (#73)', () => {
+    vi.useFakeTimers();
+    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
+    const future = new Date(Date.now() + 10_000);
+    render(<CountdownTimer deadline={future} />);
+
+    // Mock document.hidden = true and fire visibilitychange
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    expect(clearIntervalSpy).toHaveBeenCalled();
+
+    // Reset document.hidden
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    clearIntervalSpy.mockRestore();
+    vi.useRealTimers();
   });
 });
