@@ -22,6 +22,7 @@
     "back": "Back",
     "next": "Next",
     "loading": "Loading…",
+    "overdue": "Overdue",
     "error": "Error",
     "noWillsMatch": "No wills match your search or filter.",
     "allStatuses": "All statuses",
