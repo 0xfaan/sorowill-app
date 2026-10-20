@@ -36,13 +36,22 @@ export async function safeConnectWallet(): Promise<WalletConnection> {
  * SSR-safe wrapper around `getPublicKey`. Resolves `null` during server-side
  * rendering or if no wallet is currently connected, instead of throwing â€”
  * convenient for "is a wallet already connected?" checks on mount.
+ *
+ * The value returned by the wallet is validated: if it is `null`,
+ * `undefined`, not a string, or an empty/whitespace-only string, this
+ * resolves `null` rather than passing an invalid public key through to
+ * callers.
  */
 export async function safeGetPublicKey(): Promise<string | null> {
   if (!isBrowser) {
     return null;
   }
   try {
-    return await getPublicKey();
+    const publicKey = await getPublicKey();
+    if (typeof publicKey !== 'string' || publicKey.trim() === '') {
+      return null;
+    }
+    return publicKey;
   } catch {
     return null;
   }

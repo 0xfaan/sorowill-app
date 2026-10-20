@@ -91,6 +91,20 @@ describe('Error Boundary Coverage Audit (#41)', () => {
     }
   });
 
+  it('verifies dashboard error boundary announces errors to screen readers (#673)', () => {
+    const errorPath = path.join(appDir, 'dashboard', 'error.tsx');
+    expect(fs.existsSync(errorPath)).toBe(true);
+
+    const content = fs.readFileSync(errorPath, 'utf-8');
+
+    // Must have an aria-live region
+    expect(content).toMatch(/aria-live\s*=\s*["']polite["']/);
+    // Must be atomic so the whole message is announced
+    expect(content).toMatch(/aria-atomic\s*=\s*["']true["']/);
+    // The live region should wrap/contain the error message rendering
+    expect(content).toMatch(/aria-live[\s\S]*?\{[^}]*error[^}]*\}/i);
+  });
+
   it('verifies loading state files are not empty', () => {
     const loadingPath = path.join(appDir, 'dashboard', 'loading.tsx');
     if (fs.existsSync(loadingPath)) {

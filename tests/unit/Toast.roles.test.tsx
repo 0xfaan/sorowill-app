@@ -49,3 +49,32 @@ describe('Toast roles per variant (#314)', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });
+
+describe('Toast decorative icons are hidden from screen readers (#669)', () => {
+  it.each([
+    ['error', 'Payment failed', '✕'],
+    ['success', 'Will created', '✓'],
+    ['info', 'Heads up', 'ℹ'],
+  ])('marks the %s variant icon as aria-hidden', (variant, message, glyph) => {
+    const { container } = render(
+      <ToastProvider>
+        <Trigger />
+      </ToastProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: variant }));
+
+    const toast = container.querySelector('[role="alert"], [role="status"]');
+    expect(toast).not.toBeNull();
+    expect(toast).toHaveTextContent(message);
+
+    const iconSpans = Array.from(toast!.querySelectorAll('span')).filter(
+      (span) => span.textContent?.trim() === glyph,
+    );
+    expect(iconSpans).toHaveLength(1);
+
+    const icon = iconSpans[0];
+    expect(icon).toHaveAttribute('aria-hidden', 'true');
+    expect(icon).not.toHaveAttribute('role', 'button');
+    expect(icon.closest('button')).toBeNull();
+  });
+});

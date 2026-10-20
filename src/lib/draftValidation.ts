@@ -93,6 +93,28 @@ export function loadDraft(storage: Pick<Storage, 'getItem' | 'removeItem'>): Dra
 }
 
 /**
+ * Validates `state` and persists it only when it is a well-formed draft.
+ *
+ * The form autosaves on every change, so mid-edit states (e.g. a period field
+ * cleared to NaN while the user retypes it) would otherwise overwrite the
+ * last good draft. When `state` is invalid the previously saved draft is left
+ * untouched, so a refresh restores the last valid state rather than a broken
+ * one. Returns true when the draft was written.
+ */
+export function saveDraft(storage: Pick<Storage, 'setItem'>, state: unknown): boolean {
+  if (!isValidDraft(state)) return false;
+  if (!isValidPeriodDays(state.checkinPeriodDays)) return false;
+  if (!isValidPeriodDays(state.gracePeriodDays)) return false;
+  try {
+    storage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(state));
+    return true;
+  } catch {
+    // Quota exceeded or storage disabled: autosave is best-effort.
+    return false;
+  }
+}
+
+/**
  * Removes the saved draft. Called after a will is created and when the wallet
  * disconnects, so a finished or another account's draft is never offered.
  */
