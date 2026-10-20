@@ -1,0 +1,17 @@
+name: Release metadata
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semver version to release
+        required: true
+        type: string
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: node scripts/bump-release.mjs "${{ inputs.version }}"
+      - run: npm run check:changelog

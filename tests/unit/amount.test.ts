@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isValidAmount, formatAmount } from '@/lib/amount';
+import { formatAmount, isValidAmount } from '@/lib/amount';
 
 describe('isValidAmount', () => {
   it('should accept valid decimal amounts', () => {
@@ -38,22 +38,19 @@ describe('isValidAmount', () => {
 });
 
 describe('formatAmount', () => {
-  it('formats zero as "0"', () => {
-    expect(formatAmount(0)).toBe('0');
+  it('preserves decimals for amounts smaller than 0.01', () => {
+    expect(formatAmount(0.000001)).toBe('0.000001');
+    expect(formatAmount(0.0001)).toBe('0.0001');
   });
 
-  it('formats very small values without rounding to zero', () => {
-    expect(formatAmount(0.000001)).toBe('1.0000e-6');
-    expect(formatAmount(0.0001)).toBe('1.0000e-4');
-  });
-
-  it('formats normal values as fixed-point', () => {
+  it('uses two fraction digits and separators for regular amounts', () => {
     expect(formatAmount(1)).toBe('1.00');
-    expect(formatAmount(1000000)).toBe('1000000.00');
+    expect(formatAmount(1000000)).toBe('1,000,000.00');
   });
 
-  it('respects token decimals while trimming trailing zeros', () => {
-    expect(formatAmount(1.5, 6)).toBe('1.50');
-    expect(formatAmount(1.123456, 6)).toBe('1.123456');
+  it('respects token decimals and never shows a non-zero amount as zero', () => {
+    expect(formatAmount(0.0000001)).toBe('< 0.000001');
+    expect(formatAmount(0.0000001, 7)).toBe('0.0000001');
+    expect(formatAmount(0)).toBe('0.00');
   });
 });

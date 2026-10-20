@@ -9,42 +9,47 @@
 // is explicitly marketed as a wallet-free source of truth.
 export const dynamic = 'force-dynamic';
 
+import { type Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
 import { formatDeadline, WillStatus } from '@sorowill/sdk';
-
-import { getContractId, getSoroWillClient, stellarExpertUrl } from '@/lib/sorowill';
+import { getContractId, stellarExpertUrl } from '@/lib/sorowill';
+import { isValidWillId } from '@/lib/willId';
+import { getCachedWill, buildWillMetadataDescription } from '@/lib/willMetadata';
+import { isWillNotFoundError } from '@/lib/errors';
+import { nextCheckinDeadline } from '@/lib/deadlines';
 import { StatusBanner } from '@/components/StatusBanner';
 import { ShareVerification } from '@/components/ShareVerification';
 import { CopyAddress } from '@/components/CopyAddress';
 
-/**
- * Returns true when the error clearly indicates the will does not exist on
- * chain (contract-level "will not found" / "WillNotFound"). Transient RPC
- * errors will not match this pattern and are allowed to propagate to the
- * route's generic error boundary instead.
- */
-function isWillNotFoundError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const msg = error.message.toLowerCase();
-  // The SDK throws: "SoroWill simulation failed for get_will: ..."
-  // The Soroban contract returns error code #1 (WillNotFound).
-  // Match on any combination of these signals so the check stays robust
-  // even if the exact error string changes slightly.
-  return (
-    msg.includes('get_will') &&
-    (msg.includes('willnotfound') ||
-      msg.includes('not found') ||
-      msg.includes('#1') ||
-      msg.includes('error(contract, #1)') ||
-      msg.includes('no such will'))
-  );
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  let title = 'Verify Will';
+  let description = 'A public, read-only view of this will\'s on-chain state.';
+  const { id } = await params;
+  if (!isValidWillId(id)) {
+    return { title, description };
+  }
+
+  try {
+    const will = await getCachedWill(id);
+    title = `Verify Will #${will.id}`;
+    description = buildWillMetadataDescription(will);
+  } catch {
+    // Fall back to generic metadata if the will fetch fails.
+  }
+
+  return { title, description };
 }
 
-export default async function VerifyPage({ params }: { params: { id: string } }) {
+export default async function VerifyPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  if (!isValidWillId(id)) {
+    notFound();
+  }
+
   let will;
   try {
-    will = await getSoroWillClient().getWill(params.id);
+    will = await getCachedWill(id);
   } catch (error) {
     if (isWillNotFoundError(error)) {
       notFound();
@@ -54,7 +59,7 @@ export default async function VerifyPage({ params }: { params: { id: string } })
     throw error;
   }
 
-  const nextDeadline = new Date(will.lastCheckin.getTime() + will.checkinPeriodDays * 86_400 * 1000);
+  const nextDeadline = nextCheckinDeadline(will);
 
   return (
     <div className="mx-auto max-w-xl space-y-6">

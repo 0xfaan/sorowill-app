@@ -1,10 +1,33 @@
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
 
-import { formatDeadline, formatUSDC, WillStatus, type Will } from '@sorowill/sdk';
+import { formatDeadline, formatUSDC, type Will } from '@sorowill/sdk';
 
-function nextCheckinDeadline(will: Will): Date {
-  return new Date(will.lastCheckin.getTime() + will.checkinPeriodDays * 86_400 * 1000);
+import { nextCheckinDeadline } from '@/lib/deadlines';
+
+function parseCreationDate(value: unknown): Date | null {
+  let date: Date;
+  if (value instanceof Date) {
+    date = value;
+  } else if (typeof value === 'string') {
+    date = new Date(value);
+  } else if (typeof value === 'number') {
+    date = new Date(value < 1_000_000_000_000 ? value * 1000 : value);
+  } else {
+    return null;
+  }
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/**
+ * Generates a QR code data URL entirely client-side for `data`, so the
+ * encoded value (e.g. a verification URL embedding a will id) is never
+ * sent to a third-party image API. Uses the same bundled `qrcode`
+ * package already relied on for the PDF export below.
+ */
+export async function generateQrDataUrl(data: string, width = 240): Promise<string> {
+  return QRCode.toDataURL(data, { margin: 1, width });
 }
 
 /**
@@ -15,11 +38,21 @@ function nextCheckinDeadline(will: Will): Date {
  * material, which this app never has access to in the first place.
  */
 export async function downloadWillCertificate(will: Will, verifyUrl: string): Promise<void> {
-  const qrDataUrl = await QRCode.toDataURL(verifyUrl, { margin: 1, width: 240 });
+  const qrDataUrl = await generateQrDataUrl(verifyUrl);
 
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const marginX = 56;
-  let y = 64;
+  const marginTop = 64;
+  const marginBottom = 64;
+  const pageHeight = doc.internal.pageSize.getHeight();
+  let y = marginTop;
+
+  const ensureSpace = (needed: number) => {
+    if (y + needed > pageHeight - marginBottom) {
+      doc.addPage();
+      y = marginTop;
+    }
+  };
 
   doc.setFontSize(20);
   doc.setTextColor(20);
@@ -45,27 +78,35 @@ export async function downloadWillCertificate(will: Will, verifyUrl: string): Pr
     `Locked balance: ${formatUSDC(BigInt(will.balance))} USDC`,
     `Check-in period: ${will.checkinPeriodDays} day${will.checkinPeriodDays === 1 ? '' : 's'}`,
     `Grace period: ${will.gracePeriodDays} day${will.gracePeriodDays === 1 ? '' : 's'}`,
+    `Check-in deadline: ${formatDeadline(nextCheckinDeadline(will))}`,
   ];
-  if (will.status === WillStatus.Active) {
-    lines.push(`Next check-in due: ${formatDeadline(nextCheckinDeadline(will))}`);
+  if ('createdAt' in will) {
+    const createdAt = parseCreationDate(will.createdAt);
+    if (createdAt) {
+      lines.splice(2, 0, `Will created: ${formatDeadline(createdAt)}`);
+    }
   }
   for (const line of lines) {
+    ensureSpace(20);
     doc.text(line, marginX, y);
     y += 20;
   }
   y += 12;
 
+  ensureSpace(20);
   doc.setFontSize(14);
   doc.text('Beneficiaries', marginX, y);
   y += 20;
   doc.setFontSize(11);
   for (const beneficiary of will.beneficiaries) {
+    ensureSpace(18);
     doc.text(`${beneficiary.address} — ${beneficiary.percentage}%`, marginX, y);
     y += 18;
   }
   y += 24;
 
   const qrSize = 110;
+  ensureSpace(qrSize);
   doc.addImage(qrDataUrl, 'PNG', marginX, y, qrSize, qrSize);
   doc.setFontSize(10);
   doc.setTextColor(90);

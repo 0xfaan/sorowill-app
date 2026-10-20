@@ -1,93 +1,179 @@
+/**
+ * Tests for GuardianForm (#257).
+ *
+ * The key regression guard: GuardianForm must disable the "Add guardian"
+ * button at exactly MAX_GUARDIANS (from @/lib/constants), not any hardcoded
+ * alternative value. If someone edits constants.ts, the test automatically
+ * tracks the change.
+ */
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
-import { GuardianForm } from '@/components/GuardianForm';
 
-vi.mock('@/lib/freighter', () => ({
-  truncateAddress: (addr: string) => addr.length > 12 ? `${addr.slice(0, 4)}...${addr.slice(-4)}` : addr,
+import { GuardianForm } from '@/components/GuardianForm';
+import { MAX_GUARDIANS } from '@/lib/constants';
+
+// GuardianForm imports isFederatedAddress — stub it so tests don't need
+// real federated-address infrastructure.
+vi.mock('@/lib/federated', () => ({
+  isFederatedAddress: () => false,
+  resolveFederatedAddress: vi.fn(),
 }));
 
-const MAX_GUARDIANS = 5;
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-describe('GuardianForm', () => {
-  it('renders with empty state', () => {
-    render(<GuardianForm guardians={[]} onChange={vi.fn()} />);
-    expect(screen.getByRole('button', { name: /add guardian/i })).toBeInTheDocument();
+/** Build stable guardian IDs for a list of guardians. */
+function makeGuardianIds(guardians: string[]): Map<number, string> {
+  return new Map(guardians.map((_, i) => [i, `id-${i}`]));
+}
+
+/** Minimal props for a GuardianForm with no validation state. */
+function baseProps(guardians: string[]) {
+  return {
+    guardians,
+    guardianIds: makeGuardianIds(guardians),
+    resolvedGuardians: new Map<string, string>(),
+    guardianResolutionError: new Map<string, string>(),
+    resolvingGuardianId: null,
+    rowErrors: guardians.map(() => ''),
+    topError: null,
+    blankGuardianIndices: [],
+    onAdd: vi.fn(),
+    onRemove: vi.fn(),
+    onUpdate: vi.fn(),
+    onResolve: vi.fn(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('GuardianForm — Add guardian button', () => {
+  it('is enabled when the list is empty', () => {
+    render(<GuardianForm {...baseProps([])} />);
+    expect(screen.getByRole('button', { name: /add guardian/i })).not.toBeDisabled();
   });
 
-  it('renders guardian addresses', () => {
-    const guardians = [
-      'GABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB',
-      'GXYZABC1234567890ABCDEF1234567890ABCDEF1234567890AB',
-    ];
-    render(<GuardianForm guardians={guardians} onChange={vi.fn()} />);
-    expect(screen.getByDisplayValue('GABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('GXYZABC1234567890ABCDEF1234567890ABCDEF1234567890AB')).toBeInTheDocument();
+  it('is enabled when guardians.length < MAX_GUARDIANS', () => {
+    const guardians = Array.from({ length: MAX_GUARDIANS - 1 }, (_, i) => `GADDR${i}`);
+    render(<GuardianForm {...baseProps(guardians)} />);
+    expect(screen.getByRole('button', { name: /add guardian/i })).not.toBeDisabled();
   });
 
-  it('calls onChange when adding a guardian', async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    render(<GuardianForm guardians={[]} onChange={onChange} />);
-    await user.click(screen.getByRole('button', { name: /add guardian/i }));
-    expect(onChange).toHaveBeenCalledWith(['']);
-  });
-
-  it('calls onChange when removing a guardian', async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    const guardians = [
-      'GABCDEF1234567890ABCDEF1234567890ABCDEF1234567890AB',
-      'GXYZABC1234567890ABCDEF1234567890ABCDEF1234567890AB',
-    ];
-    render(<GuardianForm guardians={guardians} onChange={onChange} />);
-    const removeButtons = screen.getAllByRole('button', { name: /remove guardian/i });
-    await user.click(removeButtons[0]);
-    expect(onChange).toHaveBeenCalledWith([guardians[1]]);
-  });
-
-  it('disables add button when max guardians reached', () => {
-    const maxGuardians = Array.from({ length: MAX_GUARDIANS }, (_, i) =>
-      `GA${String(i).padStart(54, 'A')}`
-    );
-    render(<GuardianForm guardians={maxGuardians} onChange={vi.fn()} />);
+  it('is disabled when guardians.length === MAX_GUARDIANS', () => {
+    const guardians = Array.from({ length: MAX_GUARDIANS }, (_, i) => `GADDR${i}`);
+    render(<GuardianForm {...baseProps(guardians)} />);
     expect(screen.getByRole('button', { name: /add guardian/i })).toBeDisabled();
   });
 
-  it('shows clear message when max guardians limit reached', () => {
-    const maxGuardians = Array.from({ length: MAX_GUARDIANS }, (_, i) =>
-      `GA${String(i).padStart(54, 'A')}`
-    );
-    render(<GuardianForm guardians={maxGuardians} onChange={vi.fn()} />);
-    expect(screen.getByText(new RegExp(`You can add up to ${MAX_GUARDIANS} guardians`, 'i'))).toBeInTheDocument();
-  });
-
-  it('calls onChange when updating guardian address', async () => {
+  it('calls onAdd when clicked while under the limit', async () => {
     const user = userEvent.setup();
-    const onChange = vi.fn();
-    render(<GuardianForm guardians={['']} onChange={onChange} />);
-    await user.type(screen.getByPlaceholderText(/stellar address/i), 'GNEW');
-    expect(onChange).toHaveBeenCalled();
+    const props = baseProps([]);
+    render(<GuardianForm {...props} />);
+
+    await user.click(screen.getByRole('button', { name: /add guardian/i }));
+    expect(props.onAdd).toHaveBeenCalledOnce();
   });
 
-  it('allows adding guardians below max limit', async () => {
+  it('does not call onAdd when at the limit (button is disabled)', async () => {
     const user = userEvent.setup();
-    const guardians = Array.from({ length: MAX_GUARDIANS - 1 }, (_, i) =>
-      `GA${String(i).padStart(54, 'a')}`
-    );
-    const onChange = vi.fn();
-    render(<GuardianForm guardians={guardians} onChange={onChange} />);
-    const addButton = screen.getByRole('button', { name: /add guardian/i });
-    expect(addButton).not.toBeDisabled();
-    await user.click(addButton);
-    expect(onChange).toHaveBeenCalled();
+    const guardians = Array.from({ length: MAX_GUARDIANS }, (_, i) => `GADDR${i}`);
+    const props = baseProps(guardians);
+    render(<GuardianForm {...props} />);
+
+    // Clicking a disabled button should not fire the handler.
+    await user.click(screen.getByRole('button', { name: /add guardian/i }));
+    expect(props.onAdd).not.toHaveBeenCalled();
   });
 
-  it('displays guardian count', () => {
-    const guardians = Array.from({ length: 3 }, (_, i) =>
-      `GA${String(i).padStart(54, 'a')}`
+  it('aria-label reflects the current count and MAX_GUARDIANS', () => {
+    const guardians = ['GADDR0'];
+    render(<GuardianForm {...baseProps(guardians)} />);
+    expect(
+      screen.getByRole('button', {
+        name: `Add guardian (1 of ${MAX_GUARDIANS})`,
+      }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('GuardianForm — limit is sourced from @/lib/constants', () => {
+  it('MAX_GUARDIANS from constants equals the disable threshold in the component', () => {
+    // Render at exactly MAX_GUARDIANS — must be disabled.
+    const atLimit = Array.from({ length: MAX_GUARDIANS }, (_, i) => `GADDR${i}`);
+    const { rerender } = render(<GuardianForm {...baseProps(atLimit)} />);
+    expect(screen.getByRole('button', { name: /add guardian/i })).toBeDisabled();
+
+    // Render at MAX_GUARDIANS - 1 — must be enabled.
+    const belowLimit = atLimit.slice(0, MAX_GUARDIANS - 1);
+    rerender(<GuardianForm {...baseProps(belowLimit)} />);
+    expect(screen.getByRole('button', { name: /add guardian/i })).not.toBeDisabled();
+  });
+});
+
+describe('GuardianForm — remove button', () => {
+  it('renders a remove button for each guardian row', () => {
+    const guardians = ['GADDR0', 'GADDR1'];
+    render(<GuardianForm {...baseProps(guardians)} />);
+    expect(screen.getAllByRole('button', { name: /remove guardian/i })).toHaveLength(2);
+  });
+
+  it('calls onRemove with the correct index', async () => {
+    const user = userEvent.setup();
+    const guardians = ['GADDR0', 'GADDR1'];
+    const props = baseProps(guardians);
+    render(<GuardianForm {...props} />);
+
+    await user.click(screen.getByRole('button', { name: 'Remove guardian 1' }));
+    expect(props.onRemove).toHaveBeenCalledWith(0);
+  });
+});
+
+describe('GuardianForm — validation display', () => {
+  it('shows topError when provided', () => {
+    const props = {
+      ...baseProps(['GBADADDR']),
+      topError: 'You can add at most 3 guardians.',
+    };
+    render(<GuardianForm {...props} />);
+    expect(screen.getByRole('alert', { name: undefined })).toHaveTextContent(
+      'You can add at most 3 guardians.',
     );
-    render(<GuardianForm guardians={guardians} onChange={vi.fn()} />);
-    expect(screen.getByText(/3 guardians/i)).toBeInTheDocument();
+  });
+
+  it('shows per-row error for the matching index', () => {
+    const props = {
+      ...baseProps(['GBADADDR']),
+      rowErrors: ['Not a valid Stellar address'],
+    };
+    render(<GuardianForm {...props} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Not a valid Stellar address');
+  });
+});
+
+describe('GuardianForm — owner address as guardian (#386)', () => {
+  const OWNER = 'GBRT6OQL3NICNKX6FFDVAZ36IABM5EB7HDNRPQ4QEMK4TJAUUMFYNFXB';
+  const OTHER = 'GDMALMOLFTCHCB74BAEZLLXFXQK57JE4BTFS2C3WJGSVF4637PRHII5S';
+
+  it('rejects a row matching the owner address', () => {
+    render(<GuardianForm {...baseProps([OWNER])} ownerAddress={OWNER} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('You cannot be your own guardian');
+    expect(screen.getByLabelText('Guardian 1 address')).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('highlights only the owner row among already-added guardians', () => {
+    render(<GuardianForm {...baseProps([OTHER, ` ${OWNER} `])} ownerAddress={OWNER} />);
+    expect(screen.getByLabelText('Guardian 1 address')).not.toHaveAttribute('aria-invalid');
+    expect(screen.getByLabelText('Guardian 2 address')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+  });
+
+  it('accepts all non-owner addresses', () => {
+    render(<GuardianForm {...baseProps([OTHER])} ownerAddress={OWNER} />);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Guardian 1 address')).not.toHaveAttribute('aria-invalid');
   });
 });

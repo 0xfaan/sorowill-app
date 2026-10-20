@@ -55,6 +55,14 @@ describe('sorowill.ts helpers', () => {
     });
   });
 
+  describe('getExplorerNetworkSegment', () => {
+    it('returns public for mainnet and testnet for testnet', async () => {
+      const { getExplorerNetworkSegment } = await import('@/lib/sorowill');
+      expect(getExplorerNetworkSegment('mainnet')).toBe('public');
+      expect(getExplorerNetworkSegment('testnet')).toBe('testnet');
+    });
+  });
+
   describe('stellarExpertUrl', () => {
     it('should generate correct URL for contract on testnet', async () => {
       const { stellarExpertUrl } = await import('@/lib/sorowill');
@@ -90,13 +98,13 @@ describe('sorowill.ts helpers', () => {
       expect(url).toContain(txHash);
     });
 
-    it('should include the network in the URL path', async () => {
+    it('should include public for mainnet and testnet for testnet in the URL path', async () => {
       const { stellarExpertUrl } = await import('@/lib/sorowill');
 
       const url = stellarExpertUrl('contract', 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4');
 
-      // URL should have format: https://stellar.expert/explorer/{network}/{kind}/{id}
-      expect(url).toMatch(/stellar\.expert\/explorer\/(testnet|mainnet)\//);
+      // URL should have format: https://stellar.expert/explorer/{testnet|public}/{kind}/{id}
+      expect(url).toMatch(/stellar\.expert\/explorer\/(testnet|public)\//);
     });
 
     it('should handle all three kinds: contract, account, tx', async () => {
@@ -182,11 +190,11 @@ describe('sorowill.ts helpers', () => {
     it('should return a SoroWillClient singleton and reset it successfully', async () => {
       process.env.NEXT_PUBLIC_CONTRACT_ID = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
       const { getSoroWillClient, resetSoroWillClient } = await import('@/lib/sorowill');
-      
+
       const client1 = getSoroWillClient();
       const client2 = getSoroWillClient();
       expect(client1).toBe(client2);
-      
+
       resetSoroWillClient();
       const client3 = getSoroWillClient();
       expect(client1).not.toBe(client3);
@@ -207,6 +215,105 @@ describe('sorowill.ts helpers', () => {
       // the same override straight through for isolated unit tests.
       await getWillsByGuardian('GSOMEGUARDIANADDRESS', { override: fakeClient });
       expect(fakeClient.getWill).toHaveBeenCalled();
+    });
+  });
+
+  describe('getContractId network resolution (#345)', () => {
+    const TESTNET_ID = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
+    const MAINNET_ID = 'CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBSC4';
+    const GENERIC_ID = 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCSC4';
+
+    function setLocalStorageNetwork(network: 'testnet' | 'mainnet' | null) {
+      if (network === null) {
+        window.localStorage.removeItem('sorowill_network');
+      } else {
+        window.localStorage.setItem('sorowill_network', network);
+      }
+    }
+
+    beforeEach(() => {
+      // Clear contract-ID env vars; individual tests set what they need.
+      delete process.env.NEXT_PUBLIC_CONTRACT_ID;
+      delete process.env.NEXT_PUBLIC_CONTRACT_ID_MAINNET;
+      delete process.env.NEXT_PUBLIC_CONTRACT_ID_TESTNET;
+      setLocalStorageNetwork(null);
+    });
+
+    afterEach(() => {
+      setLocalStorageNetwork(null);
+    });
+
+    it('throws when only the generic contract ID is set and the network is mainnet', async () => {
+      process.env.NEXT_PUBLIC_CONTRACT_ID = GENERIC_ID;
+      setLocalStorageNetwork('mainnet');
+
+      const { getContractId, resetSoroWillClient } = await import('@/lib/sorowill');
+      resetSoroWillClient();
+
+      expect(() => getContractId()).toThrow(/NEXT_PUBLIC_CONTRACT_ID_MAINNET/);
+    });
+
+    it('throws when no contract ID is set on mainnet', async () => {
+      setLocalStorageNetwork('mainnet');
+
+      const { getContractId, resetSoroWillClient } = await import('@/lib/sorowill');
+      resetSoroWillClient();
+
+      expect(() => getContractId()).toThrow(/NEXT_PUBLIC_CONTRACT_ID_MAINNET/);
+    });
+
+    it('returns NEXT_PUBLIC_CONTRACT_ID_MAINNET when set and the network is mainnet', async () => {
+      process.env.NEXT_PUBLIC_CONTRACT_ID = GENERIC_ID;
+      process.env.NEXT_PUBLIC_CONTRACT_ID_MAINNET = MAINNET_ID;
+      setLocalStorageNetwork('mainnet');
+
+      const { getContractId, resetSoroWillClient } = await import('@/lib/sorowill');
+      resetSoroWillClient();
+
+      expect(getContractId()).toBe(MAINNET_ID);
+    });
+
+    it('returns NEXT_PUBLIC_CONTRACT_ID_TESTNET when set and the network is testnet', async () => {
+      process.env.NEXT_PUBLIC_CONTRACT_ID = GENERIC_ID;
+      process.env.NEXT_PUBLIC_CONTRACT_ID_TESTNET = TESTNET_ID;
+      setLocalStorageNetwork('testnet');
+
+      const { getContractId, resetSoroWillClient } = await import('@/lib/sorowill');
+      resetSoroWillClient();
+
+      expect(getContractId()).toBe(TESTNET_ID);
+    });
+
+    it('falls back to the generic NEXT_PUBLIC_CONTRACT_ID on testnet for backward compatibility', async () => {
+      process.env.NEXT_PUBLIC_CONTRACT_ID = GENERIC_ID;
+      setLocalStorageNetwork('testnet');
+
+      const { getContractId, resetSoroWillClient } = await import('@/lib/sorowill');
+      resetSoroWillClient();
+
+      expect(getContractId()).toBe(GENERIC_ID);
+    });
+
+    it('does not fall back to the generic ID on mainnet even when it is set', async () => {
+      process.env.NEXT_PUBLIC_CONTRACT_ID = GENERIC_ID;
+      // NEXT_PUBLIC_CONTRACT_ID_MAINNET intentionally unset
+      setLocalStorageNetwork('mainnet');
+
+      const { getContractId, resetSoroWillClient } = await import('@/lib/sorowill');
+      resetSoroWillClient();
+
+      expect(() => getContractId()).toThrow(/NEXT_PUBLIC_CONTRACT_ID_MAINNET/);
+    });
+
+    it('prefers NEXT_PUBLIC_CONTRACT_ID_TESTNET over the generic ID on testnet', async () => {
+      process.env.NEXT_PUBLIC_CONTRACT_ID = GENERIC_ID;
+      process.env.NEXT_PUBLIC_CONTRACT_ID_TESTNET = TESTNET_ID;
+      setLocalStorageNetwork('testnet');
+
+      const { getContractId, resetSoroWillClient } = await import('@/lib/sorowill');
+      resetSoroWillClient();
+
+      expect(getContractId()).toBe(TESTNET_ID);
     });
   });
 });

@@ -2,40 +2,43 @@
 
 import { useEffect, useState } from 'react';
 import { getNetwork, resetSoroWillClient } from '@/lib/sorowill';
+import { clearTokenDecimalsCache } from '@/lib/tokenDecimals';
 import { type SoroWillNetwork } from '@sorowill/sdk';
+import { DestructiveActionConfirmation } from '@/components/DestructiveActionConfirmation';
+import { useMounted } from '@/lib/useMounted';
 
 export function NetworkSwitcher() {
   const [network, setNetwork] = useState<SoroWillNetwork>('testnet');
-  const [mounted, setMounted] = useState(false);
+  const mounted = useMounted();
+  const [pendingNetwork, setPendingNetwork] = useState<SoroWillNetwork | null>(null);
 
   useEffect(() => {
     setNetwork(getNetwork());
-    setMounted(true);
   }, []);
 
   function handleNetworkChange(event: React.ChangeEvent<HTMLSelectElement>) {
     const newNetwork = event.target.value as SoroWillNetwork;
     if (newNetwork === network) return;
+    // Do not mutate the DOM node's value directly. The `<select>` is a
+    // controlled input bound to `value={network}`, so leaving `network`
+    // unchanged keeps the rendered dropdown on the current network. We
+    // only stage the pending selection until the user confirms.
+    setPendingNetwork(newNetwork);
+  }
 
-    const confirmSwitch = window.confirm(
-      `Warning: Switching to ${newNetwork} may require you to reconnect your wallet and switch the network inside your Freighter extension. Do you want to proceed?`
-    );
-
-    if (confirmSwitch) {
-      window.localStorage.setItem('sorowill_network', newNetwork);
-      setNetwork(newNetwork);
-      // Invalidate the cached SoroWillClient singleton so the next
-      // module evaluation starts fresh. This is important because
-      // Vercel's serverless functions can stay warm across requests,
-      // and the SDK's own spec-caching could otherwise serve stale
-      // contract state after a network switch.
-      resetSoroWillClient();
-      // Reload the page to reconstruct client and clear/reset state
-      window.location.reload();
-    } else {
-      // Revert select input
-      event.target.value = network;
-    }
+  function confirmNetworkSwitch(newNetwork: SoroWillNetwork) {
+    window.localStorage.setItem('sorowill_network', newNetwork);
+    setNetwork(newNetwork);
+    // Invalidate the cached SoroWillClient singleton so the next
+    // module evaluation starts fresh. This is important because
+    // Vercel's serverless functions can stay warm across requests,
+    // and the SDK's own spec-caching could otherwise serve stale
+    // contract state after a network switch.
+    resetSoroWillClient();
+    // Contract IDs are network-scoped; drop decimals resolved for the old network.
+    clearTokenDecimalsCache();
+    // Reload the page to reconstruct client and clear/reset state
+    window.location.reload();
   }
 
   if (!mounted) {
@@ -45,6 +48,7 @@ export function NetworkSwitcher() {
   return (
     <div className="relative inline-flex items-center">
       <select
+        aria-label="Stellar network"
         value={network}
         onChange={handleNetworkChange}
         className={`rounded-full border px-3 py-1 text-xs font-semibold bg-will-dark cursor-pointer focus:outline-none transition-all duration-200 ${
@@ -54,12 +58,22 @@ export function NetworkSwitcher() {
         }`}
       >
         <option value="testnet" className="bg-will-dark text-amber-400 font-semibold">
-          ● Testnet
+          ◍ Testnet
         </option>
         <option value="mainnet" className="bg-will-dark text-emerald-400 font-semibold">
-          ● Mainnet
+          ◍ Mainnet
         </option>
       </select>
+      <DestructiveActionConfirmation
+        isOpen={pendingNetwork !== null}
+        action="switch_network"
+        willId=""
+        onCancel={() => setPendingNetwork(null)}
+        onConfirm={() => {
+          if (pendingNetwork) confirmNetworkSwitch(pendingNetwork);
+          setPendingNetwork(null);
+        }}
+      />
     </div>
   );
 }

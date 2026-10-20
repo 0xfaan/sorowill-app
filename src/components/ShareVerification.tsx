@@ -1,16 +1,41 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import QRCode from 'qrcode';
+import { useMounted } from '@/lib/useMounted';
+import { useToast } from '@/components/Toast';
 
 export function ShareVerification() {
   const [url, setUrl] = useState('');
+  const [qrDataUrl, setQrDataUrl] = useState('');
   const [copied, setCopied] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const [canShare, setCanShare] = useState(false);
+  const mounted = useMounted();
+  const toast = useToast();
 
   useEffect(() => {
     setUrl(window.location.href);
-    setMounted(true);
+    setCanShare(typeof navigator.share === 'function');
   }, []);
+
+  useEffect(() => {
+    if (!url) return;
+    let cancelled = false;
+    QRCode.toDataURL(url, {
+      margin: 1,
+      width: 200,
+      color: { dark: '#7D00FF', light: '#ffffff' },
+    })
+      .then((dataUrl) => {
+        if (!cancelled) setQrDataUrl(dataUrl);
+      })
+      .catch((err) => {
+        console.error('Failed to generate QR code: ', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
 
   async function handleCopy() {
     try {
@@ -19,14 +44,24 @@ export function ShareVerification() {
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error('Failed to copy text: ', err);
+      toast.error('Failed to copy link — please copy it manually.');
+    }
+  }
+
+  async function handleShare() {
+    try {
+      await navigator.share({ title: document.title, url });
+    } catch (err) {
+      // User dismissed the share sheet — nothing to do.
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      // Share failed for another reason: fall back to copying the link.
+      await handleCopy();
     }
   }
 
   if (!mounted) {
     return <div className="h-48 w-full rounded-xl bg-white/5 animate-pulse" />;
   }
-
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&color=7D00FF&bgcolor=ffffff&data=${encodeURIComponent(url)}`;
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col items-center gap-4 text-center">
@@ -37,16 +72,19 @@ export function ShareVerification() {
 
       {/* QR Code Container */}
       <div className="p-3 bg-white rounded-lg shadow-lg transition-transform hover:scale-105 duration-200">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={qrCodeUrl}
-          alt="Verification Page QR Code"
-          width={180}
-          height={180}
-          loading="lazy"
-          decoding="async"
-          className="rounded"
-        />
+        {qrDataUrl ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={qrDataUrl}
+            alt="Verification Page QR Code"
+            width={180}
+            height={180}
+            decoding="async"
+            className="rounded"
+          />
+        ) : (
+          <div className="h-[180px] w-[180px] rounded bg-black/5 animate-pulse" />
+        )}
       </div>
 
       {/* Action Area */}
@@ -59,14 +97,14 @@ export function ShareVerification() {
         />
         <button
           type="button"
-          onClick={handleCopy}
+          onClick={canShare ? handleShare : handleCopy}
           className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-all duration-200 ${
             copied
               ? 'bg-emerald-500 text-white'
               : 'bg-will-purple text-white hover:bg-will-purple/90'
           }`}
         >
-          {copied ? 'Copied!' : 'Copy Link'}
+          {copied ? 'Copied!' : canShare ? 'Share Link' : 'Copy Link'}
         </button>
       </div>
     </div>
