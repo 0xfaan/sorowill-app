@@ -21,10 +21,12 @@ export default function DashboardError({
 
   return (
     <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-8 text-center">
-      <h1 className="text-lg font-semibold text-red-300">Could not load dashboard</h1>
-      {process.env.NODE_ENV !== 'production' && (
-        <p className="mt-1 font-mono text-xs text-red-300/40">{formatError(error)}</p>
-      )}
+      <div aria-live="polite" aria-atomic="true">
+        <h1 className="text-lg font-semibold text-red-300">Could not load dashboard</h1>
+        {process.env.NODE_ENV !== 'production' && (
+          <p className="mt-1 font-mono text-xs text-red-300/40">{formatError(error)}</p>
+        )}
+      </div>
       <button
         type="button"
         onClick={reset}

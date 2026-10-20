@@ -95,6 +95,17 @@ export function getTokenDecimals(tokenAddress: string, network?: SoroWillNetwork
 }
 
 /**
+ * The contract guarantees `Will.balance >= 0`, but the SDK's type signature
+ * only guarantees `bigint` (any sign). Clamp any unexpected negative value
+ * to `0n` so the UI never renders a negative balance, rather than trusting
+ * the contract invariant to hold at every call site.
+ */
+export function getSafeBalance(balance: string | bigint): bigint {
+  const raw = typeof balance === 'bigint' ? balance : BigInt(balance);
+  return raw < 0n ? 0n : raw;
+}
+
+/**
  * Formats `balanceBaseUnits` (the raw integer stored by the contract) as a
  * human-readable decimal string using the correct precision for `tokenAddress`.
  *
@@ -112,6 +123,9 @@ export function formatTokenBalance(
   /** Override decimals — used in tests and when decimals are already known. */
   decimalsOverride?: number,
 ): string {
+  if (decimalsOverride !== undefined && decimalsOverride < 0) {
+    throw new Error(`decimalsOverride must be non-negative, got ${decimalsOverride}`);
+  }
   const decimals = decimalsOverride ?? getTokenDecimals(tokenAddress);
   const raw = typeof balanceBaseUnits === 'bigint' ? balanceBaseUnits : BigInt(balanceBaseUnits);
 

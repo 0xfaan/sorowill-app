@@ -66,27 +66,52 @@ export interface ReminderDispatchResult {
 // filesystem is ephemeral per-invocation on Vercel and cannot be relied on).
 // See .env.example and README.md#reminder-delivery for KV_REST_API_URL / KV_REST_API_TOKEN.
 //
-// NOTE: All env vars are read at call time (inside helper functions) rather
-// than at module-load time, so that tests can set process.env before calling
-// any of the exported functions.
+// NOTE: The KV env vars are snapshotted once at module load (see kvConfig
+// below) instead of being re-read from process.env on every KV round-trip.
 
 const KV_LOCK_TTL_SECONDS = 30;
 /** How long to wait between retry attempts when the lock is held. */
 const KV_LOCK_RETRY_DELAY_MS = 100;
 /** Maximum number of acquire retries before giving up. */
 const KV_LOCK_MAX_RETRIES = 20;
-function kvConfig(): { url: string; token: string; storeKey: string; lockKey: string } {
+type KvConfig = { url: string; token: string; storeKey: string; lockKey: string };
+
+function readKvConfig(): KvConfig | null {
   const url = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
+  if (!url || !token) return null;
   const storeKey = process.env.REMINDER_STORE_KV_KEY || 'sorowill:reminder-store';
-  if (!url || !token) {
+  return { url, token, storeKey, lockKey: `${storeKey}:lock` };
+}
+
+// Env vars are read once at module load and cached. kvConfig() is called on
+// every KV request (several per reminder operation, more under lock retries),
+// and these values never change during the lifetime of a serverless instance,
+// so re-reading process.env each time is wasted work (#698).
+//
+// If the snapshot is incomplete at load time (e.g. a test sets process.env in
+// beforeEach after importing this module), kvConfig() falls back to a single
+// lazy read and caches that result once it is complete. A missing
+// configuration is never cached, so it keeps throwing until it is fixed.
+let cachedKvConfig: KvConfig | null = readKvConfig();
+
+/** Clears the cached KV config so the next call re-reads process.env. Test-only. */
+export function resetKvConfigCache(): void {
+  cachedKvConfig = null;
+}
+
+function kvConfig(): KvConfig {
+  if (cachedKvConfig) return cachedKvConfig;
+  const config = readKvConfig();
+  if (!config) {
     throw new Error(
       'Reminder storage is not configured. Set KV_REST_API_URL and KV_REST_API_TOKEN ' +
         '(a Vercel KV / Upstash Redis REST endpoint) so reminder subscriptions persist ' +
         'across serverless invocations. See .env.example.',
     );
   }
-  return { url, token, storeKey, lockKey: `${storeKey}:lock` };
+  cachedKvConfig = config;
+  return config;
 }
 
 function normalizeEmail(email: string): string {

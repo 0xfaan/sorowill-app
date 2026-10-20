@@ -148,6 +148,74 @@ export function classifyCloneError(error: unknown): CloneErrorKind {
   return 'unknown';
 }
 
+/**
+ * The distinct failure modes when submitting a check-in.
+ *
+ * - `network`  — RPC / connectivity failure; the caller can retry.
+ * - `contract` — The contract rejected the call (will not found, simulation
+ *                failure, unauthorized, etc.); retrying won't help.
+ * - `unknown`  — Any other error.
+ */
+export type CheckInErrorKind = 'network' | 'contract' | 'unknown';
+
+/**
+ * Classifies a thrown value from a check-in call into one of the three
+ * `CheckInErrorKind` buckets so the UI can show a targeted message.
+ *
+ * Resolution order (most-specific first):
+ *   1. network  — RPC or fetch-level connectivity error
+ *   2. contract — contract-level rejection (not found, simulation,
+ *                 unauthorized, insufficient funds, etc.)
+ *   3. unknown  — everything else
+ */
+export function classifyCheckInError(error: unknown): CheckInErrorKind {
+  const message = extractMessage(error).toLowerCase();
+
+  if (
+    message.includes('network') ||
+    message.includes('fetch') ||
+    message.includes('timeout') ||
+    message.includes('connection') ||
+    message.includes('offline')
+  ) {
+    return 'network';
+  }
+
+  if (
+    message.includes('contract') ||
+    message.includes('simulation') ||
+    message.includes('unauthorized') ||
+    message.includes('permission') ||
+    message.includes('insufficient') ||
+    message.includes('balance') ||
+    isWillNotFoundMessage(message)
+  ) {
+    return 'contract';
+  }
+
+  return 'unknown';
+}
+
+/**
+ * Returns a category-specific, user-facing message for a failed check-in.
+ * Network failures suggest retrying; contract failures explain that the
+ * will rejected the action.
+ */
+export function formatCheckInError(error: unknown): string {
+  if (typeof console !== 'undefined') {
+    console.error('[SoroWill] Check-in error:', error);
+  }
+
+  switch (classifyCheckInError(error)) {
+    case 'network':
+      return 'Unable to reach the blockchain network. Please check your connection and try again.';
+    case 'contract':
+      return 'Check-in was rejected by the contract. The will may no longer be in a state that allows this action.';
+    default:
+      return 'Check-in failed. Please try again later.';
+  }
+}
+
 export function formatError(error: unknown): string {
   const message = extractMessage(error);
 

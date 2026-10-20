@@ -61,16 +61,23 @@ function ToastContainer() {
 
   const { toasts, removeToast } = context;
 
+  const errorToasts = toasts.filter((toast) => toast.variant === 'error');
+  const politeToasts = toasts.filter((toast) => toast.variant !== 'error');
+
   return (
-    <div
-      role="region"
-      aria-live="polite"
-      aria-atomic="true"
-      className="fixed bottom-4 right-4 z-50 space-y-2"
-    >
-      {toasts.map((toast) => (
-        <ToastItem key={toast.id} toast={toast} onDismiss={removeToast} />
-      ))}
+    <div className="fixed bottom-4 right-4 z-50 space-y-2">
+      {/* Errors are announced assertively so they interrupt the screen reader. */}
+      <div role="region" aria-live="assertive" aria-atomic="true" className="space-y-2">
+        {errorToasts.map((toast) => (
+          <ToastItem key={toast.id} toast={toast} onDismiss={removeToast} />
+        ))}
+      </div>
+      {/* Success/info are announced politely and wait their turn. */}
+      <div role="region" aria-live="polite" aria-atomic="true" className="space-y-2">
+        {politeToasts.map((toast) => (
+          <ToastItem key={toast.id} toast={toast} onDismiss={removeToast} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -108,7 +115,7 @@ function ToastItem({ toast, onDismiss }: ToastItemProps) {
       // message text itself is what gets announced.
       role={toast.variant === 'error' ? 'alert' : 'status'}
     >
-      <span className="font-semibold">{icon}</span>
+      <span className="font-semibold" aria-hidden="true">{icon}</span>
       <span className="flex-1">{toast.message}</span>
       <button
         type="button"
