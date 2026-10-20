@@ -5,8 +5,13 @@ import { useRouter, useSearchParams } from 'next/navigation';
 
 import { formatUSDC, toStroops, validateBeneficiaries, type Beneficiary } from '@sorowill/sdk';
 
-import { truncateAddress, safeGetPublicKey } from '@/lib/freighter';
-import { getSoroWillClient } from '@/lib/sorowill';
+import {
+  normalizeWalletNetwork,
+  safeGetPublicKey,
+  safeGetWalletNetwork,
+  truncateAddress,
+} from '@/lib/freighter';
+import { getNetwork, getSoroWillClient } from '@/lib/sorowill';
 import { GUARDIAN_THRESHOLD, MAX_GUARDIANS } from '@/lib/constants';
 import { formatError, classifyCloneError, type CloneErrorKind } from '@/lib/errors';
 import { isFederatedAddress, resolveFederatedAddress } from '@/lib/federated';
@@ -128,6 +133,12 @@ export default function NewWillPage() {
   const [gracePeriodError, setGracePeriodError] = useState<string | null>(null);
 
   const toast = useToast();
+
+  // Network the form was started on. The user may sit on the review step for a
+  // while; if the app network changes in the meantime (e.g. via the network
+  // switcher in another tab), the token address and beneficiaries entered here
+  // may not be valid on the new network, so submission is blocked (#700).
+  const formNetworkRef = useRef(getNetwork());
 
   // Fetch the connected wallet address once so we can reject it as a guardian.
   useEffect(() => {
@@ -363,6 +374,40 @@ export default function NewWillPage() {
 
   function removeGuardian(index: number) {
     setGuardians((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  /**
+   * Re-validates the whole form and the wallet/network state immediately
+   * before submission. Each step is validated when the user advances, but the
+   * review step can be left open indefinitely, so the network or wallet may
+   * have changed since then (#700). Returns an error message, or null if the
+   * will is still valid to submit.
+   */
+  async function validateBeforeSubmit(): Promise<string | null> {
+    if (!isAmountValid) {
+      return 'The token address or amount is no longer valid. Go back to the Amount step to fix it.';
+    }
+    if (!beneficiariesValid) {
+      return 'The beneficiaries are no longer valid. Go back to the Beneficiaries step to fix them.';
+    }
+
+    const appNetwork = getNetwork();
+    if (appNetwork !== formNetworkRef.current) {
+      return `The app network changed from ${formNetworkRef.current} to ${appNetwork} while you were reviewing. Switch back to ${formNetworkRef.current} or start the will again on ${appNetwork}.`;
+    }
+
+    const [publicKey, walletInfo] = await Promise.all([safeGetPublicKey(), safeGetWalletNetwork()]);
+    if (!publicKey || !walletInfo) {
+      return 'Your wallet is no longer connected. Reconnect Freighter and try again.';
+    }
+    if (ownerAddress && publicKey !== ownerAddress) {
+      return 'The connected wallet account changed while you were reviewing. Switch back to the original account or start again.';
+    }
+    if (normalizeWalletNetwork(walletInfo.network) !== appNetwork) {
+      return `Your wallet is connected to ${walletInfo.network}, but this will is being created on ${appNetwork}. Switch your Freighter network to ${appNetwork} and try again.`;
+    }
+
+    return null;
   }
 
   async function handleSubmit() {
