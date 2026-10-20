@@ -22,6 +22,7 @@
     "back": "Atrás",
     "next": "Siguiente",
     "loading": "Cargando…",
+    "overdue": "Vencido",
     "error": "Error",
     "noWillsMatch": "Ningún testamento coincide con tu búsqueda o filtro.",
     "allStatuses": "Todos los estados",

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 
 export interface CountdownTimerProps {
   deadline: Date;
@@ -16,12 +17,19 @@ function plural(value: number, unit: string): string {
  * Spoken form of the remaining time, e.g. "1 day 2 hours 3 minutes remaining".
  * Minute precision keeps the accessible name from changing every second.
  */
-function describeRemaining(overdue: boolean, days: number, hours: number, minutes: number): string {
-  if (overdue) return 'Overdue';
+function describeRemaining(
+  overdueText: string,
+  overdue: boolean,
+  days: number,
+  hours: number,
+  minutes: number,
+): string {
+  if (overdue) return overdueText;
   return `${plural(days, 'day')} ${plural(hours, 'hour')} ${plural(minutes, 'minute')} remaining`;
 }
 
 export function CountdownTimer({ deadline, label }: CountdownTimerProps) {
+  const t = useTranslations('common');
   const computeSeconds = () => Math.floor((deadline.getTime() - Date.now()) / 1000);
   const [secondsLeft, setSecondsLeft] = useState(() => computeSeconds());
 
@@ -111,10 +119,10 @@ export function CountdownTimer({ deadline, label }: CountdownTimerProps) {
       ) : null}
       <span
         role="timer"
-        aria-label={accessibleName}
+        aria-label={describeRemaining(t('overdue'), overdue, days, hours, minutes)}
         className={`font-mono text-2xl font-semibold tabular-nums ${colorClass}`}
       >
-        {overdue ? 'Overdue — ' : ''}
+        {overdue ? `${t('overdue')} — ` : ''}
         {pad(days)}:{pad(hours)}:{pad(minutes)}:{pad(seconds)}
       </span>
     </div>

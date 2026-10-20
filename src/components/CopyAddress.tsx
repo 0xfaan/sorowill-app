@@ -22,6 +22,7 @@ export interface CopyAddressProps {
  * Shows a brief 'Copied!' confirmation for 2 seconds after a successful copy.
  */
 export function CopyAddress({ address, label, className = '' }: CopyAddressProps) {
+  const t = useTranslations('common');
   const [copied, setCopied] = useState(false);
   // One reset timer at a time: re-copying restarts it, unmounting clears it.
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
