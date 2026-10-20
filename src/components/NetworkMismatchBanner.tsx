@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { safeGetWalletNetwork, safeGetPublicKey } from '@/lib/freighter';
+import { normalizeWalletNetwork, safeGetWalletNetwork, safeGetPublicKey } from '@/lib/freighter';
 import { getNetwork } from '@/lib/sorowill';
 import type { SoroWillNetwork } from '@sorowill/sdk';
 
@@ -17,18 +17,6 @@ const POLL_INTERVAL_MS = 4000;
 interface Mismatch {
   appNetwork: SoroWillNetwork;
   walletNetwork: string;
-}
-
-/** Maps Freighter network strings to SoroWill network identifiers. */
-function normalizeWalletNetwork(network: string): SoroWillNetwork | null {
-  const lower = network.toLowerCase();
-  if (lower === 'testnet' || lower === 'test network' || lower.includes('test')) {
-    return 'testnet';
-  }
-  if (lower === 'mainnet' || lower === 'public' || lower.includes('main') || lower.includes('public')) {
-    return 'mainnet';
-  }
-  return null;
 }
 
 /**

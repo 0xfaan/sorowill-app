@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useCallback, useEffect, useRef } from 'react';
+import { useState } from 'react';
 
 import { MAX_GUARDIANS, GUARDIAN_THRESHOLD } from '@/lib/constants';
 import { isFederatedAddress } from '@/lib/federated';
@@ -158,18 +158,23 @@ export function GuardianForm({
   onUpdate,
   onResolve,
 }: GuardianFormProps) {
-  // Parents typically pass fresh callbacks each render; route them through a ref
-  // so rows receive stable handlers and only re-render when their own data changes.
-  const callbacks = useRef({ onUpdate, onRemove, onResolve });
-  useEffect(() => {
-    callbacks.current = { onUpdate, onRemove, onResolve };
-  });
-  const handleUpdate = useCallback((index: number, value: string) => callbacks.current.onUpdate(index, value), []);
-  const handleRemove = useCallback((index: number) => callbacks.current.onRemove(index), []);
-  const handleResolve = useCallback(
-    (index: number, address: string) => callbacks.current.onResolve(index, address),
-    [],
-  );
+  const [addError, setAddError] = useState<string | null>(null);
+
+  const normalizedOwner = ownerAddress?.trim().toLowerCase() ?? '';
+
+  const handleAdd = () => {
+    if (normalizedOwner) {
+      const ownerAlreadyPresent = guardians.some(
+        (g) => g.trim().toLowerCase() === normalizedOwner
+      );
+      if (ownerAlreadyPresent) {
+        setAddError(OWNER_AS_GUARDIAN_ERROR);
+        return;
+      }
+    }
+    setAddError(null);
+    onAdd();
+  };
 
   return (
     <fieldset className="space-y-3">
@@ -179,7 +184,7 @@ export function GuardianForm({
         </legend>
         <button
           type="button"
-          onClick={onAdd}
+          onClick={handleAdd}
           disabled={guardians.length >= MAX_GUARDIANS}
           aria-label={`Add guardian (${guardians.length} of ${MAX_GUARDIANS})`}
           className="text-xs font-medium text-will-purple hover:underline disabled:opacity-40"
@@ -193,22 +198,94 @@ export function GuardianForm({
         incapacitated.
       </p>
 
+      {addError ? (
+        <p
+          className="rounded-lg border border-red-400/40 bg-red-400/10 px-3 py-2 text-xs text-red-400"
+          role="alert"
+        >
+          {addError}
+        </p>
+      ) : null}
+
       {guardians.map((guardian, index) => {
         const guardianId = guardianIds.get(index) || '';
-        const isOwner = !!ownerAddress && guardian.trim() === ownerAddress;
+        const isOwner =
+          !!normalizedOwner && guardian.trim().toLowerCase() === normalizedOwner;
+        const rowError = rowErrors[index] || (isOwner ? OWNER_AS_GUARDIAN_ERROR : '');
         return (
-          <GuardianRow
-            key={guardianId}
-            index={index}
-            guardian={guardian}
-            rowError={rowErrors[index] || (isOwner ? OWNER_AS_GUARDIAN_ERROR : '')}
-            resolvedAddress={resolvedGuardians.get(guardianId)}
-            resolutionError={guardianResolutionError.get(guardianId)}
-            isResolving={!!guardianId && resolvingGuardianId === guardianId}
-            onUpdate={handleUpdate}
-            onRemove={handleRemove}
-            onResolve={handleResolve}
-          />
+          <div key={guardianId} className="space-y-2">
+            <div className="flex items-center gap-2">
+              <label htmlFor={`guardian-${index}`} className="sr-only">
+                Guardian {index + 1} address
+              </label>
+              <input
+                id={`guardian-${index}`}
+                type="text"
+                value={guardian}
+                onChange={(e) => onUpdate(index, e.target.value)}
+                placeholder="Guardian address (G...) or federated address (name*domain.com)"
+                aria-label={`Guardian ${index + 1} address`}
+                aria-describedby={rowError ? `guardian-error-${index}` : undefined}
+                aria-invalid={rowError ? 'true' : undefined}
+                className={`min-w-0 flex-1 rounded-lg border px-3 py-2 font-mono text-sm text-will-light placeholder:text-will-light/40 focus:outline-none ${
+                  rowError
+                    ? 'border-red-400/60 bg-red-500/5 focus:border-red-400'
+                    : guardian.trim() === '' && guardians.length > 0
+                    ? 'border-amber-400/40 bg-white/5 focus:border-will-purple'
+                    : 'border-white/10 bg-white/5 focus:border-will-purple'
+                }`}
+              />
+              {isFederatedAddress(guardian) && (
+                <button
+                  type="button"
+                  onClick={() => onResolve(index, guardian)}
+                  disabled={resolvingGuardianId === guardianId}
+                  className="whitespace-nowrap rounded-lg border border-white/20 px-3 py-2 text-xs font-medium text-will-light/70 transition hover:border-will-purple hover:text-will-light disabled:opacity-40"
+                >
+                  {resolvingGuardianId === guardianId ? 'Resolving…' : 'Resolve'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => onRemove(index)}
+                aria-label={`Remove guardian ${index + 1}`}
+                className="rounded-lg border border-white/10 px-2 py-2 text-will-light/60 transition hover:border-red-400/40 hover:text-red-400"
+              >
+                ✕
+              </button>
+            </div>
+
+            {resolvedGuardians.has(guardianId) && (
+              <div className="rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-2">
+                <p className="text-xs text-emerald-400">Resolved address:</p>
+                <p className="font-mono text-xs text-emerald-300">
+                  {resolvedGuardians.get(guardianId)}
+                </p>
+              </div>
+            )}
+
+            {guardianResolutionError.has(guardianId) && (
+              <div className="rounded-lg border border-red-400/40 bg-red-400/10 px-3 py-2">
+                <p className="text-xs text-red-400">{guardianResolutionError.get(guardianId)}</p>
+              </div>
+            )}
+
+            {rowError ? (
+              <p
+                id={`guardian-error-${index}`}
+                className="text-xs text-red-400"
+                role="alert"
+              >
+                {rowError}
+              </p>
+            ) : null}
+
+            {!rowError && guardian.trim() === '' ? (
+              <p className="text-xs text-amber-400/80">
+                This empty row will be excluded when the will is submitted.
+              </p>
+            ) : null}
+          </div>
         );
       })}
 

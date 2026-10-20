@@ -17,12 +17,26 @@ function isValidStellarAddress(address: string): boolean {
   return /^G[0-9A-Z]{55}$/.test(address);
 }
 
+/**
+ * The SDK's `Beneficiary.percentage` field is typed as `number`, but some
+ * SDK versions/boundaries (e.g. values round-tripped through Soroban
+ * contract calls) may hand back a `bigint` instead. Converting at this
+ * single boundary keeps the rest of the component's arithmetic (which
+ * relies on fractional `number` math) safe regardless of which type the
+ * SDK actually sends.
+ */
+export function toPercentageNumber(percentage: Beneficiary['percentage'] | bigint): number {
+  return typeof percentage === 'bigint' ? Number(percentage) : percentage;
+}
+
 function getAddressErrors(beneficiaries: Beneficiary[]): Record<number, string> {
   const errors: Record<number, string> = {};
   beneficiaries.forEach((b, i) => {
     if (b.percentage > 0 && !b.address.trim()) {
       errors[i] = 'Address is required';
     } else if (b.address && isFederatedAddress(b.address)) {
+      // A federated address (name*domain) is only valid once resolved to a G...
+      // address; the contract rejects the raw form, so block submission.
       errors[i] = 'Federated address must be resolved before submitting — click Resolve';
     } else if (b.address && !isFederatedAddress(b.address) && !isValidStellarAddress(b.address)) {
       errors[i] = 'Invalid Stellar address';
@@ -46,17 +60,24 @@ function equalSplit(count: number): number[] {
  * hundredths here keeps the form's arithmetic identical to that encoding and
  * free of floating-point drift (e.g. 33.33 + 33.33 + 33.34).
  */
-function toHundredths(percentage: number): number {
-  return Math.round(percentage * 100);
+function toHundredths(percentage: Beneficiary['percentage'] | bigint): number {
+  return Math.round(toPercentageNumber(percentage) * 100);
 }
 
-function hasAtMostTwoDecimals(percentage: number): boolean {
-  return Math.abs(percentage * 100 - toHundredths(percentage)) < 1e-6;
+function hasAtMostTwoDecimals(percentage: Beneficiary['percentage'] | bigint): boolean {
+  return Math.abs(toPercentageNumber(percentage) * 100 - toHundredths(percentage)) < 1e-6;
 }
 
 function sumPercentages(beneficiaries: Beneficiary[]): number {
   return beneficiaries.reduce((sum, b) => sum + toHundredths(b.percentage), 0) / 100;
 }
+
+/**
+ * Tolerance for comparing the percentage total against 100. Percentages are
+ * stored with at most two decimal places, so any drift is far below this
+ * threshold; it only guards against floating-point noise (e.g. 99.99999).
+ */
+const PERCENTAGE_SUM_EPSILON = 1e-9;
 
 /**
  * Returns a human-readable validation message for the current beneficiary
@@ -86,7 +107,7 @@ function getBeneficiaryValidationMessage(beneficiaries: Beneficiary[]): string |
   if (hasNonInteger) {
     // The SDK only encodes whole percentages; show what rounding each share
     // would produce so the user sees the distribution actually changes.
-    const rounded = beneficiaries.map((b) => Math.round(b.percentage));
+    const rounded = beneficiaries.map((b) => Math.round(toPercentageNumber(b.percentage)));
     const roundedTotal = rounded.reduce((sum, p) => sum + p, 0);
     return `Percentages must be whole numbers (e.g. 33, not 33.5) — rounding would give ${rounded
       .map((p) => `${p}%`)
@@ -94,7 +115,7 @@ function getBeneficiaryValidationMessage(beneficiaries: Beneficiary[]): string |
   }
 
   const total = sumPercentages(beneficiaries);
-  if (total !== 100) {
+  if (Math.abs(total - 100) > PERCENTAGE_SUM_EPSILON) {
     return `Total must equal 100% (currently ${total}%)`;
   }
 
@@ -264,6 +285,7 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
                 <input
                   id={`beneficiary-address-${index}`}
                   type="text"
+                  aria-label={`Beneficiary ${index + 1} address`}
                   placeholder="Stellar address (G...) or federated address (name*domain.com)"
                   value={beneficiary.address}
                   onChange={(event) => updateRow(index, { address: event.target.value })}
@@ -292,6 +314,7 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
                   <input
                     id={`beneficiary-percentage-${index}`}
                     type="number"
+                    aria-label={`Beneficiary ${index + 1} percentage`}
                     min={0}
                     max={100}
                     step={0.01}

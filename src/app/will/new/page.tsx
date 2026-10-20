@@ -5,22 +5,28 @@ import { useRouter, useSearchParams } from 'next/navigation';
 
 import { formatUSDC, toStroops, validateBeneficiaries, type Beneficiary } from '@sorowill/sdk';
 
-import { truncateAddress, safeGetPublicKey } from '@/lib/freighter';
-import { getSoroWillClient } from '@/lib/sorowill';
+import {
+  normalizeWalletNetwork,
+  safeGetPublicKey,
+  safeGetWalletNetwork,
+  truncateAddress,
+} from '@/lib/freighter';
+import { getNetwork, getSoroWillClient } from '@/lib/sorowill';
 import { GUARDIAN_THRESHOLD, MAX_GUARDIANS } from '@/lib/constants';
 import { formatError, classifyCloneError, type CloneErrorKind } from '@/lib/errors';
 import { isFederatedAddress, resolveFederatedAddress } from '@/lib/federated';
 import { getUserBalance } from '@/lib/balance';
+import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { isValidAmount } from '@/lib/amount';
 import { BeneficiaryForm } from '@/components/BeneficiaryForm';
 import { GuardianForm } from '@/components/GuardianForm';
 import { validateGuardians } from '@/lib/guardianValidation';
 import { useStableRowIds } from '@/lib/useStableRowIds';
 import {
-  DRAFT_STORAGE_KEY,
   clearDraft,
   loadDraft,
   parsePeriodInput,
+  saveDraft,
   type FormStateDraft,
 } from '@/lib/draftValidation';
 import { useToast } from '@/components/Toast';
@@ -28,12 +34,26 @@ import { useToast } from '@/components/Toast';
 const CHECKIN_OPTIONS = [30, 60, 90, 180, 365];
 const GRACE_OPTIONS = [3, 7, 14];
 
-// The contract's persistent storage TTL is bumped to ~60 days' worth of ledgers on each write.
-// Check-in periods exceeding this window risk storage archival before the owner's next check-in.
+// Soroban persistent storage has a TTL measured in ledgers; when it runs out,
+// the entry is archived and must be restored before the contract can read it.
+// The SoroWill contract extends each will's TTL to ~60 days of ledgers
+// (~5 s per ledger, so ~1,036,800 ledgers) every time it writes the will,
+// e.g. on creation and on each check-in. That makes 60 days the longest gap
+// between check-ins that is guaranteed to stay within the live TTL.
+//
+// Trade-off: longer check-in periods are more convenient for the owner, but
+// past this window the will can be archived before the next check-in, and
+// restoring it costs an extra transaction and fee (and confuses anyone
+// looking it up in the meantime). A longer TTL bump would mean higher rent
+// paid up front on every write. So we still allow longer periods but warn
+// about them in the Timing step rather than blocking them.
+//
+// Keep this in sync with the contract's TTL extension constant if it changes.
+// State archival / TTL docs:
+// https://developers.stellar.org/docs/learn/encyclopedia/storage/state-archival
 const SAFE_CHECKIN_WINDOW_DAYS = 60;
 
 const STEP_LABELS = ['Amount', 'Beneficiaries', 'Timing', 'Guardians', 'Review'];
-const STORAGE_KEY = DRAFT_STORAGE_KEY;
 
 interface FormState {
   step: number;
@@ -105,6 +125,9 @@ export default function NewWillPage() {
 
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
+  // Re-check the balance only once typing in the amount field settles, so a
+  // burst of keystrokes costs one Horizon request instead of one per key.
+  const debouncedAmount = useDebouncedValue(amount, BALANCE_CHECK_DEBOUNCE_MS);
 
   const [ownerAddress, setOwnerAddress] = useState<string | null>(null);
 
@@ -114,6 +137,12 @@ export default function NewWillPage() {
   const [gracePeriodError, setGracePeriodError] = useState<string | null>(null);
 
   const toast = useToast();
+
+  // Network the form was started on. The user may sit on the review step for a
+  // while; if the app network changes in the meantime (e.g. via the network
+  // switcher in another tab), the token address and beneficiaries entered here
+  // may not be valid on the new network, so submission is blocked (#700).
+  const formNetworkRef = useRef(getNetwork());
 
   // Fetch the connected wallet address once so we can reject it as a guardian.
   useEffect(() => {
@@ -150,6 +179,25 @@ export default function NewWillPage() {
 
     void fetchBalance();
   }, []);
+
+  useEffect(() => {
+    if (!ownerAddress || debouncedAmount === '') return;
+
+    // Abort a still-pending check when the amount changes again or on unmount
+    // so a slow, stale response can't overwrite a newer one.
+    const controller = new AbortController();
+    setLoadingBalance(true);
+    void getUserBalance(ownerAddress, controller.signal).then((balance) => {
+      if (controller.signal.aborted) return;
+      setWalletBalance(balance);
+      setLoadingBalance(false);
+    });
+
+    return () => {
+      controller.abort();
+      setLoadingBalance(false);
+    };
+  }, [ownerAddress, debouncedAmount]);
 
   // Clear the draft when the wallet disconnects so stale state is never
   // re-loaded by a different account in the same browser session.
@@ -193,7 +241,9 @@ export default function NewWillPage() {
 
   const tokenValid = CONTRACT_ADDRESS_PATTERN.test(token.trim());
   const showTokenError = token.trim() !== '' && !tokenValid;
-  const isAmountValid = isValidAmount(amount) && tokenValid;
+  const isAmountZero = amount.trim() !== '' && Number(amount) === 0;
+  const showAmountError = amount.trim() !== '' && (isAmountZero || !isValidAmount(amount));
+  const isAmountValid = isValidAmount(amount) && !isAmountZero && tokenValid;
   useEffect(() => {
     const state: FormState = {
       step,
@@ -205,7 +255,7 @@ export default function NewWillPage() {
       guardians,
     };
     if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      saveDraft(localStorage, state);
     }
   }, [step, token, amount, beneficiaries, checkinPeriodDays, gracePeriodDays, guardians]);
 
@@ -241,7 +291,10 @@ export default function NewWillPage() {
   // warning, not a blocking error — the user sees the warning and can proceed).
   const guardiansValid = guardianTopError === null;
 
-  const canGoNext = [isAmountValid, beneficiariesValid, checkinPeriodError === null && gracePeriodError === null, guardiansValid, true][step];
+  const checkinPeriodUnsafe = isUnsafeCheckinPeriod(checkinPeriodDays);
+  const timingValid = checkinPeriodError === null && gracePeriodError === null && !checkinPeriodUnsafe;
+
+  const canGoNext = [isAmountValid, beneficiariesValid, timingValid, guardiansValid, true][step];
 
   // Rows that are blank — the user will see a warning that they'll be dropped.
   const blankGuardianIndices = guardians
@@ -346,15 +399,65 @@ export default function NewWillPage() {
     setGuardians((prev) => prev.filter((_, i) => i !== index));
   }
 
+  /**
+   * Re-validates the whole form and the wallet/network state immediately
+   * before submission. Each step is validated when the user advances, but the
+   * review step can be left open indefinitely, so the network or wallet may
+   * have changed since then (#700). Returns an error message, or null if the
+   * will is still valid to submit.
+   */
+  async function validateBeforeSubmit(): Promise<string | null> {
+    if (!isAmountValid) {
+      return 'The token address or amount is no longer valid. Go back to the Amount step to fix it.';
+    }
+    if (!beneficiariesValid) {
+      return 'The beneficiaries are no longer valid. Go back to the Beneficiaries step to fix them.';
+    }
+
+    const appNetwork = getNetwork();
+    if (appNetwork !== formNetworkRef.current) {
+      return `The app network changed from ${formNetworkRef.current} to ${appNetwork} while you were reviewing. Switch back to ${formNetworkRef.current} or start the will again on ${appNetwork}.`;
+    }
+
+    const [publicKey, walletInfo] = await Promise.all([safeGetPublicKey(), safeGetWalletNetwork()]);
+    if (!publicKey || !walletInfo) {
+      return 'Your wallet is no longer connected. Reconnect Freighter and try again.';
+    }
+    if (ownerAddress && publicKey !== ownerAddress) {
+      return 'The connected wallet account changed while you were reviewing. Switch back to the original account or start again.';
+    }
+    if (normalizeWalletNetwork(walletInfo.network) !== appNetwork) {
+      return `Your wallet is connected to ${walletInfo.network}, but this will is being created on ${appNetwork}. Switch your Freighter network to ${appNetwork} and try again.`;
+    }
+
+    return null;
+  }
+
   async function handleSubmit() {
     setSubmitting(true);
     setError(null);
+    // Defense-in-depth: never submit a zero (or otherwise invalid) amount.
+    if (!isValidAmount(amount) || Number(amount) === 0) {
+      setError('Amount must be greater than zero.');
+      setSubmitting(false);
+      return;
+    }
     if (!Number.isInteger(checkinPeriodDays) || checkinPeriodDays <= 0 || !Number.isInteger(gracePeriodDays) || gracePeriodDays <= 0) {
       setError('Check-in and grace periods must be positive whole numbers.');
       setSubmitting(false);
       return;
     }
-    
+
+    // Block submission when the check-in period exceeds the contract's safe
+    // storage TTL window — on-chain data could be archived before the next check-in.
+    if (isUnsafeCheckinPeriod(checkinPeriodDays)) {
+      setError(
+        `Check-in period must be ${SAFE_CHECKIN_WINDOW_DAYS} days or fewer to avoid storage archival risk.`,
+      );
+      setSubmitting(false);
+      return;
+    }
+
     // Validate guardians before submission
     if (guardianTopError !== null) {
       setError('Please fix the guardian address errors before submitting.');
@@ -560,8 +663,9 @@ export default function NewWillPage() {
                     }
                   }}
                   placeholder="1000.00"
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none"
-                  aria-describedby="amount-help"
+                  className={`w-full rounded-lg border bg-white/5 px-3 py-2 text-sm text-will-light placeholder:text-will-light/40 focus:border-will-purple focus:outline-none ${showAmountError ? 'border-red-400' : 'border-white/10'}`}
+                  aria-describedby={showAmountError ? 'amount-help amount-error' : 'amount-help'}
+                  aria-invalid={showAmountError}
                 />
                 {walletBalance && (
                   <button
@@ -573,6 +677,13 @@ export default function NewWillPage() {
                   </button>
                 )}
               </div>
+              {showAmountError ? (
+                <p id="amount-error" role="alert" className="mt-1 text-xs text-red-400">
+                  {isAmountZero
+                    ? 'Amount must be greater than zero.'
+                    : 'Please enter a valid amount greater than zero.'}
+                </p>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -638,11 +749,15 @@ export default function NewWillPage() {
                   </p>
                 ) : null}
               </div>
-              {isUnsafeCheckinPeriod(checkinPeriodDays) && (
-                <div className="rounded-lg border border-amber-400/40 bg-amber-400/5 px-3 py-3" role="status">
+              {checkinPeriodUnsafe && (
+                <div
+                  className="rounded-lg border border-amber-400/40 bg-amber-400/5 px-3 py-3"
+                  role="alert"
+                  data-testid="checkin-period-warning"
+                >
                   <p className="text-xs font-medium text-amber-400">Storage archival risk</p>
                   <p className="mt-1 text-xs text-amber-400/90">
-                    This {checkinPeriodDays}-day check-in period exceeds the contract&apos;s storage safety window ({SAFE_CHECKIN_WINDOW_DAYS} days). Your will&apos;s on-chain data may be archived before your next check-in, making it inaccessible. Consider choosing a shorter period, or plan to check in more frequently.
+                    This {checkinPeriodDays}-day check-in period exceeds the contract&apos;s storage safety window ({SAFE_CHECKIN_WINDOW_DAYS} days). Your will&apos;s on-chain data may be archived before your next check-in, making it inaccessible. Choose a period of {SAFE_CHECKIN_WINDOW_DAYS} days or fewer to continue.
                   </p>
                 </div>
               )}
@@ -825,7 +940,7 @@ export default function NewWillPage() {
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={submitting || guardianTopError !== null}
+            disabled={submitting || guardianTopError !== null || !isAmountValid}
             className="w-full rounded-full bg-will-purple px-5 py-2 text-sm font-medium text-white transition hover:bg-will-purple/90 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
           >
             {submitting ? 'Creating…' : 'Create Will'}

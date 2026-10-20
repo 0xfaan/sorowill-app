@@ -178,12 +178,16 @@ const GUARDIAN_SCAN_MAX_ID = 1000;
 export async function getWillsByGuardian(
   guardianAddress: string,
   context?: SoroWillClientContext,
+  signal?: AbortSignal,
 ): Promise<GuardianWillsResult> {
   const client = getSoroWillClient(context);
   const wills: Will[] = [];
   let hasErrors = false;
 
   for (let batchStart = 1; batchStart <= GUARDIAN_SCAN_MAX_ID; batchStart += GUARDIAN_SCAN_BATCH_SIZE) {
+    // Stop scanning once the caller has gone away instead of issuing up to
+    // GUARDIAN_SCAN_MAX_ID more RPC calls nobody will read.
+    signal?.throwIfAborted();
     const batchEnd = Math.min(batchStart + GUARDIAN_SCAN_BATCH_SIZE - 1, GUARDIAN_SCAN_MAX_ID);
     let foundAnyInBatch = false;
 

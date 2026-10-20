@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { calculateShares, formatUSDC, getTimeUntilCheckin, WillStatus, type Will } from '@sorowill/sdk';
 
 import { formatCheckinLabel } from '@/lib/deadlines';
+import { getSafeBalance } from '@/lib/tokenDecimals';
 import { StatusBanner } from './StatusBanner';
 
 export interface WillCardProps {
@@ -47,7 +48,7 @@ function WillCardComponent({
   const userShare = useMemo(() => {
     if (!showEntitledShare || !connectedAddress || !will.beneficiaries?.length) return null;
     try {
-      const shares = calculateShares(will.balance, will.beneficiaries);
+      const shares = calculateShares(getSafeBalance(will.balance), will.beneficiaries);
       return shares.find(
         (s) => s.address.toLowerCase() === connectedAddress.toLowerCase(),
       );
@@ -59,7 +60,7 @@ function WillCardComponent({
   return (
     <article
       className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/5 p-4 transition hover:border-will-purple/40 sm:flex-row sm:items-center sm:justify-between"
-      aria-label={`Will #${will.id}, ${formatUSDC(BigInt(will.balance))} USDC`}
+      aria-label={`Will #${will.id}, ${formatUSDC(getSafeBalance(will.balance))} USDC`}
     >
       <div className="min-w-0 space-y-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -70,7 +71,7 @@ function WillCardComponent({
         </div>
 
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-will-light/70">
-          <span>{formatUSDC(BigInt(will.balance))} USDC locked</span>
+          <span>{formatUSDC(getSafeBalance(will.balance))} USDC locked</span>
           {userShare ? (
             <>
               <span className="text-will-light/40">•</span>
@@ -80,6 +81,16 @@ function WillCardComponent({
             </>
           ) : null}
         </div>
+
+        {will.beneficiaries?.length ? (
+          <ul aria-label="Beneficiaries" className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-will-light/70">
+            {will.beneficiaries.map((beneficiary) => (
+              <li key={beneficiary.address} className="truncate">
+                {beneficiary.address}
+              </li>
+            ))}
+          </ul>
+        ) : null}
 
         {will.status === WillStatus.Active ? (
           <p className={`text-xs ${colorClass}`} role="status">

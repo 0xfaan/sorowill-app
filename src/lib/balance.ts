@@ -21,7 +21,10 @@ function getUsdcIssuer(network: string): string {
   return issuer;
 }
 
-export async function getUserBalance(userAddress: string): Promise<string | null> {
+export async function getUserBalance(
+  userAddress: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
   try {
     const network = getNetwork();
     const horizonUrl =
@@ -30,7 +33,9 @@ export async function getUserBalance(userAddress: string): Promise<string | null
         : 'https://horizon-testnet.stellar.org';
 
     const response = await fetch(`${horizonUrl}/accounts/${userAddress}`, {
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)])
+        : AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!response.ok) {
       return null;

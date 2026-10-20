@@ -1,8 +1,39 @@
 import { type Will } from '@sorowill/sdk';
 import { isWillNotFoundMessage } from '@/lib/errors';
 
+/**
+ * Time model for deadline math
+ *
+ * All deadlines are computed as `instant + days * MS_PER_DAY` on epoch
+ * milliseconds, which mirrors the contract (`period_days * 86_400` added to a
+ * ledger timestamp in seconds).
+ *
+ * DST: epoch milliseconds are UTC and have no notion of local time, so a
+ * DST transition between the two instants cannot shift the result. A 7-day
+ * period that spans a spring-forward change is exactly 7 × 86 400 s later,
+ * which renders as 6d 23h or 7d 1h *wall-clock* time in the affected zone —
+ * that is intentional, because the contract enforces elapsed seconds, not
+ * calendar days. Do not "fix" this with local-time `setDate()` arithmetic;
+ * that would diverge from on-chain enforcement by up to an hour.
+ *
+ * Leap seconds: both JavaScript `Date` and Stellar ledger close times use
+ * POSIX/Unix time, in which every day is exactly 86 400 s and leap seconds
+ * are not counted (they are smeared or repeated by the OS clock). Because
+ * the client and the contract share that model, a leap second can never
+ * make the displayed deadline disagree with the on-chain one. The only
+ * observable effect is that around a leap second the true elapsed SI time
+ * may differ from the computed duration by ±1 s, which is well below the
+ * granularity this app displays. No leap second is scheduled; the IERS
+ * intends to abolish them by 2035.
+ */
+const MS_PER_DAY = 86_400 * 1000;
+
+function addDays(instant: Date, days: number): Date {
+  return new Date(instant.getTime() + days * MS_PER_DAY);
+}
+
 export function nextCheckinDeadline(will: Will): Date {
-  return new Date(will.lastCheckin.getTime() + will.checkinPeriodDays * 86_400 * 1000);
+  return addDays(will.lastCheckin, will.checkinPeriodDays);
 }
 
 /**
@@ -19,7 +50,7 @@ export function graceDeadline(will: Will): Date | null {
   if (!will.triggerTime) {
     return null;
   }
-  return new Date(will.triggerTime.getTime() + will.gracePeriodDays * 86_400 * 1000);
+  return addDays(will.triggerTime, will.gracePeriodDays);
 }
 
 export enum WillErrorCode {

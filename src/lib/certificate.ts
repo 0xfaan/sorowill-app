@@ -30,15 +30,59 @@ export async function generateQrDataUrl(data: string, width = 240): Promise<stri
   return QRCode.toDataURL(data, { margin: 1, width });
 }
 
+/** Raised when the certificate PDF (or its QR code) could not be produced. */
+export class CertificateExportError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'CertificateExportError';
+  }
+}
+
 /**
  * Generates and downloads a PDF "certificate" summarizing `will`'s public,
  * on-chain terms, with a QR code and link back to `verifyUrl` for
  * independent confirmation. Only ever reads fields already present on
  * `Will` (all public contract state) — never private keys or signing
  * material, which this app never has access to in the first place.
+ *
+ * Throws `CertificateExportError` if any stage of generation fails, so callers
+ * can tell the user the export did not succeed instead of failing silently.
  */
 export async function downloadWillCertificate(will: Will, verifyUrl: string): Promise<void> {
-  const qrDataUrl = await generateQrDataUrl(verifyUrl);
+  let qrDataUrl: string;
+  try {
+    qrDataUrl = await generateQrDataUrl(verifyUrl);
+  } catch (err) {
+    throw new CertificateExportError('Could not generate the verification QR code for the certificate.', {
+      cause: err,
+    });
+  }
+  if (!qrDataUrl.startsWith('data:image/png')) {
+    throw new CertificateExportError('Could not generate the verification QR code for the certificate.');
+  }
+
+  let doc: jsPDF;
+  try {
+    doc = buildCertificatePdf(will, verifyUrl, qrDataUrl);
+  } catch (err) {
+    throw new CertificateExportError('Could not generate the certificate PDF.', { cause: err });
+  }
+
+  // jsPDF can produce an empty document without throwing (e.g. on a bad
+  // image); check there is real output before handing it to the browser.
+  const pdfSize = doc.output('arraybuffer').byteLength;
+  if (pdfSize === 0) {
+    throw new CertificateExportError('The generated certificate PDF was empty.');
+  }
+
+  try {
+    doc.save(`sorowill-${will.id}-certificate.pdf`);
+  } catch (err) {
+    throw new CertificateExportError('Could not save the certificate PDF.', { cause: err });
+  }
+}
+
+function buildCertificatePdf(will: Will, verifyUrl: string, qrDataUrl: string): jsPDF {
 
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const marginX = 56;
@@ -114,5 +158,5 @@ export async function downloadWillCertificate(will: Will, verifyUrl: string): Pr
   doc.setTextColor(79, 70, 229);
   doc.textWithLink(verifyUrl, marginX + qrSize + 16, y + 60, { url: verifyUrl });
 
-  doc.save(`sorowill-${will.id}-certificate.pdf`);
+  return doc;
 }
