@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+
 import { MAX_GUARDIANS, GUARDIAN_THRESHOLD } from '@/lib/constants';
 import { isFederatedAddress } from '@/lib/federated';
 import { OWNER_AS_GUARDIAN_ERROR } from '@/lib/guardianValidation';
@@ -53,6 +55,24 @@ export function GuardianForm({
   onUpdate,
   onResolve,
 }: GuardianFormProps) {
+  const [addError, setAddError] = useState<string | null>(null);
+
+  const normalizedOwner = ownerAddress?.trim().toLowerCase() ?? '';
+
+  const handleAdd = () => {
+    if (normalizedOwner) {
+      const ownerAlreadyPresent = guardians.some(
+        (g) => g.trim().toLowerCase() === normalizedOwner
+      );
+      if (ownerAlreadyPresent) {
+        setAddError(OWNER_AS_GUARDIAN_ERROR);
+        return;
+      }
+    }
+    setAddError(null);
+    onAdd();
+  };
+
   return (
     <fieldset className="space-y-3">
       <div className="flex items-center justify-between">
@@ -61,7 +81,7 @@ export function GuardianForm({
         </legend>
         <button
           type="button"
-          onClick={onAdd}
+          onClick={handleAdd}
           disabled={guardians.length >= MAX_GUARDIANS}
           aria-label={`Add guardian (${guardians.length} of ${MAX_GUARDIANS})`}
           className="text-xs font-medium text-will-purple hover:underline disabled:opacity-40"
@@ -75,9 +95,19 @@ export function GuardianForm({
         incapacitated.
       </p>
 
+      {addError ? (
+        <p
+          className="rounded-lg border border-red-400/40 bg-red-400/10 px-3 py-2 text-xs text-red-400"
+          role="alert"
+        >
+          {addError}
+        </p>
+      ) : null}
+
       {guardians.map((guardian, index) => {
         const guardianId = guardianIds.get(index) || '';
-        const isOwner = !!ownerAddress && guardian.trim() === ownerAddress;
+        const isOwner =
+          !!normalizedOwner && guardian.trim().toLowerCase() === normalizedOwner;
         const rowError = rowErrors[index] || (isOwner ? OWNER_AS_GUARDIAN_ERROR : '');
         return (
           <div key={guardianId} className="space-y-2">
@@ -91,6 +121,7 @@ export function GuardianForm({
                 value={guardian}
                 onChange={(e) => onUpdate(index, e.target.value)}
                 placeholder="Guardian address (G...) or federated address (name*domain.com)"
+                aria-label={`Guardian ${index + 1} address`}
                 aria-describedby={rowError ? `guardian-error-${index}` : undefined}
                 aria-invalid={rowError ? 'true' : undefined}
                 className={`min-w-0 flex-1 rounded-lg border px-3 py-2 font-mono text-sm text-will-light placeholder:text-will-light/40 focus:outline-none ${

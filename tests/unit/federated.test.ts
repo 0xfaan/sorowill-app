@@ -217,26 +217,94 @@ describe('#340 — stellar.toml FEDERATION_SERVER parsing', () => {
 });
 
 // ---------------------------------------------------------------------------
-// #679 — Federation domain comes from the exported constant
+// #666 — Horizon federation response format validation
 // ---------------------------------------------------------------------------
 
-describe('#679 — resolveFederatedAddress uses FEDERATION_DOMAIN', () => {
-  it('exports a non-empty federation domain constant', () => {
-    expect(typeof FEDERATION_DOMAIN).toBe('string');
-    expect(FEDERATION_DOMAIN.length).toBeGreaterThan(0);
+describe('#666 — resolveFederatedAddress response format validation', () => {
+  /** Build a toml response pointing at a unique federation server. */
+  function makeTomlResponse(domain: string): Response {
+    return new Response(
+      makeStellarToml(`FEDERATION_SERVER = "https://fed.${domain}/fed"`),
+      { status: 200, headers: { 'content-type': 'text/plain' } },
+    );
+  }
+
+  /** Build a federation response with an arbitrary raw body. */
+  function makeFedResponse(body: string): Response {
+    return new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  it('rejects when the federation response body is not valid JSON', async () => {
+    mockFetch
+      .mockResolvedValueOnce(makeTomlResponse('domain666a.com'))
+      .mockResolvedValueOnce(makeFedResponse('not-json{'));
+
+    await expect(resolveFederatedAddress('user*domain666a.com')).rejects.toThrow(
+      /invalid JSON/i,
+    );
   });
 
-  it('fetches stellar.toml from the FEDERATION_DOMAIN constant', async () => {
-    const [tomlRes, fedRes] = makeMockResponses(
-      'FEDERATION_SERVER = "https://fed.domain679a.com/fed"',
+  it('rejects when the federation response JSON is an array', async () => {
+    mockFetch
+      .mockResolvedValueOnce(makeTomlResponse('domain666b.com'))
+      .mockResolvedValueOnce(makeFedResponse(JSON.stringify([VALID_ACCOUNT_ID])));
+
+    await expect(resolveFederatedAddress('user*domain666b.com')).rejects.toThrow(
+      /must be a JSON object/i,
     );
-    mockFetch.mockResolvedValueOnce(tomlRes).mockResolvedValueOnce(fedRes);
+  });
 
-    await resolveFederatedAddress('user*domain679a.com');
+  it('rejects when the federation response JSON is a primitive', async () => {
+    mockFetch
+      .mockResolvedValueOnce(makeTomlResponse('domain666c.com'))
+      .mockResolvedValueOnce(makeFedResponse(JSON.stringify('just-a-string')));
 
-    const [firstFetchUrl] = mockFetch.mock.calls[0] as [string];
-    expect(firstFetchUrl).toContain(FEDERATION_DOMAIN);
-    expect(firstFetchUrl).toBe(`https://${FEDERATION_DOMAIN}/.well-known/stellar.toml`);
+    await expect(resolveFederatedAddress('user*domain666c.com')).rejects.toThrow(
+      /must be a JSON object/i,
+    );
+  });
+
+  it('rejects when the federation response is missing account_id', async () => {
+    mockFetch
+      .mockResolvedValueOnce(makeTomlResponse('domain666d.com'))
+      .mockResolvedValueOnce(makeFedResponse(JSON.stringify({ stellar_address: 'user*domain666d.com' })));
+
+    await expect(resolveFederatedAddress('user*domain666d.com')).rejects.toThrow(
+      /missing "account_id"/i,
+    );
+  });
+
+  it('rejects when account_id is a number', async () => {
+    mockFetch
+      .mockResolvedValueOnce(makeTomlResponse('domain666e.com'))
+      .mockResolvedValueOnce(makeFedResponse(JSON.stringify({ account_id: 12345 })));
+
+    await expect(resolveFederatedAddress('user*domain666e.com')).rejects.toThrow(
+      /account_id.*string/i,
+    );
+  });
+
+  it('rejects when account_id is null', async () => {
+    mockFetch
+      .mockResolvedValueOnce(makeTomlResponse('domain666f.com'))
+      .mockResolvedValueOnce(makeFedResponse(JSON.stringify({ account_id: null })));
+
+    await expect(resolveFederatedAddress('user*domain666f.com')).rejects.toThrow(
+      /account_id.*string/i,
+    );
+  });
+
+  it('rejects when account_id is a string that is not a valid Stellar public key', async () => {
+    mockFetch
+      .mockResolvedValueOnce(makeTomlResponse('domain666g.com'))
+      .mockResolvedValueOnce(makeFedResponse(JSON.stringify({ account_id: 'not-a-public-key' })));
+
+    await expect(resolveFederatedAddress('user*domain666g.com')).rejects.toThrow(
+      /valid Stellar public key/i,
+    );
   });
 });
 

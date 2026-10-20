@@ -19,8 +19,13 @@ describe('NetworkBadge', () => {
     const badge = screen.getByLabelText(/current network/i);
     expect(badge).toBeInTheDocument();
     expect(badge).toHaveTextContent(/testnet|mainnet/i);
+    expect(badge.getAttribute('aria-label')).toMatch(/current network/i);
+    expect(badge.getAttribute('aria-label')).toMatch(/testnet|mainnet/i);
+    expect(badge.getAttribute('aria-label')).toMatch(/checking/i);
     await waitFor(() => expect(badge).toHaveAttribute('data-rpc-status', 'connected'));
     expect(badge.getAttribute('title')).toMatch(/connected \(\d+ms\)/);
+    await waitFor(() => expect(badge.getAttribute('aria-label')).toMatch(/connected/i));
+    expect(badge.getAttribute('aria-label')).toMatch(/current network/i);
   });
 
   it('shows offline status when the RPC is unreachable', async () => {
@@ -31,6 +36,8 @@ describe('NetworkBadge', () => {
     const badge = screen.getByLabelText(/current network/i);
     await waitFor(() => expect(badge).toHaveAttribute('data-rpc-status', 'offline'));
     expect(badge.getAttribute('title')).toContain('Failed to fetch');
+    await waitFor(() => expect(badge.getAttribute('aria-label')).toMatch(/offline/i));
+    expect(badge.getAttribute('aria-label')).toMatch(/current network/i);
   });
 });
 

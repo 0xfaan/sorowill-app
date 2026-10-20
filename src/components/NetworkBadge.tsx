@@ -111,6 +111,8 @@ export function NetworkBadge() {
 
   const isMainnet = network === 'mainnet';
   const healthText = describeHealth(health);
+  const networkLabel = isMainnet ? 'Mainnet' : 'Testnet';
+  const accessibleLabel = `Current network: ${networkLabel}. ${healthText}`;
 
   return (
     <span
@@ -119,12 +121,14 @@ export function NetworkBadge() {
           ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
           : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
       }`}
-      aria-label={`Current network: ${network}. ${healthText}`}
+      role="status"
+      aria-live="polite"
+      aria-label={accessibleLabel}
       title={healthText}
       data-rpc-status={health.status}
     >
       <span className={`h-1.5 w-1.5 rounded-full ${DOT_CLASS[health.status]}`} aria-hidden="true" />
-      {network}
+      <span aria-hidden="true">{network}</span>
     </span>
   );
 }
