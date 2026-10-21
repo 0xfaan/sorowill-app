@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -319,7 +319,11 @@ function DashboardPageOld() {
   const baseList =
     tab === 'owned' ? ownedWills : tab === 'inheriting' ? inheritingWills : guardianWills;
 
-  const activeList = filterWills(baseList, search, statusFilter);
+  // Only recompute when the list or filters change, not on unrelated state updates.
+  const activeList = useMemo(
+    () => filterWills(baseList, search, statusFilter),
+    [baseList, search, statusFilter],
+  );
 
   const handleExportCSV = useCallback(() => {
     let csv: string;
