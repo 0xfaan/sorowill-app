@@ -8,6 +8,8 @@ import { safeGetPublicKey, truncateAddress } from '@/lib/freighter';
 import { getSoroWillClient, stellarExpertUrl } from '@/lib/sorowill';
 import { formatError, formatLoadError } from '@/lib/errors';
 import { graceDeadline } from '@/lib/deadlines';
+import { accountExists } from '@/lib/balance';
+import { isValidStellarAddress } from '@/lib/guardianValidation';
 import { useToast } from '@/components/Toast';
 import { StatusBanner } from '@/components/StatusBanner';
 import { CopyAddress } from '@/components/CopyAddress';
@@ -188,6 +190,14 @@ export default function InheritPageClient({ id }: { id: string }) {
     setClaiming(true);
     setError(null);
     try {
+      if (publicKey) {
+        if (!isValidStellarAddress(publicKey)) {
+          throw new Error('The connected address is not a valid Stellar account address.');
+        }
+        if ((await accountExists(publicKey)) === false) {
+          throw new Error('The connected address does not exist on the network. Fund the account and try again.');
+        }
+      }
       const { txHash } = await getSoroWillClient().releaseInheritance(willId);
       setClaimTxHash(txHash);
       await refetch();
