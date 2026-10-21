@@ -346,6 +346,25 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
                 ✕
               </button>
             </div>
+            {isFederatedAddress(beneficiary.address) && (
+              <div className="ml-1 flex items-center gap-2">
+                <span
+                  data-testid={`beneficiary-federated-badge-${index}`}
+                  className="rounded-full border border-will-purple/40 bg-will-purple/10 px-2 py-0.5 text-xs text-will-purple"
+                >
+                  Federated
+                </span>
+                {resolvingId === beneficiaryId ? (
+                  <span role="status" className="text-xs text-will-light/60">
+                    Resolving…
+                  </span>
+                ) : resolvedAddresses.has(beneficiaryId) ? (
+                  <span className="text-xs text-emerald-400">✓ Resolved</span>
+                ) : (
+                  <span className="text-xs text-amber-400">Unresolved</span>
+                )}
+              </div>
+            )}
             {resolvedAddresses.has(beneficiaryId) && (
               <div className="ml-1 rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-2">
                 <p className="text-xs text-emerald-400">Resolved address:</p>
