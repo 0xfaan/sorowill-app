@@ -8,6 +8,7 @@ import { safeGetPublicKey, truncateAddress } from '@/lib/freighter';
 import { getSoroWillClient, stellarExpertUrl } from '@/lib/sorowill';
 import { formatError, formatLoadError } from '@/lib/errors';
 import { graceDeadline } from '@/lib/deadlines';
+import { serverNow, syncServerClock } from '@/lib/serverClock';
 import { accountExists } from '@/lib/balance';
 import { isValidStellarAddress } from '@/lib/guardianValidation';
 import { useToast } from '@/components/Toast';
@@ -41,7 +42,7 @@ export default function InheritPageClient({ id }: { id: string }) {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [claiming, setClaiming] = useState(false);
   const [claimTxHash, setClaimTxHash] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => serverNow());
 
   const isMounted = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
@@ -169,9 +170,16 @@ export default function InheritPageClient({ id }: { id: string }) {
     if (!will || will.status !== WillStatus.Triggered) return;
     const deadline = graceDeadline(will);
     if (!deadline) return;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    setNow(serverNow());
+    void syncServerClock().then(() => {
+      if (!cancelled) setNow(serverNow());
+    });
+    const timer = window.setInterval(() => setNow(serverNow()), 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [will]);
 
   // Quick client-side validation before hitting the RPC layer
