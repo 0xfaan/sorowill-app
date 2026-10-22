@@ -23,6 +23,12 @@ export function claimIsAvailable(status: WillStatus, grace: Date | null, now: nu
   return status === WillStatus.Triggered && grace !== null && now >= grace.getTime();
 }
 
+/** Address that released the will, when the SDK/contract exposes it. */
+export function getClaimedBy(will: Will): string | null {
+  const w = will as Will & { releasedBy?: string | null; claimedBy?: string | null };
+  return w.releasedBy ?? w.claimedBy ?? null;
+}
+
 /**
  * Deduplicated will-fetch cache.
  *
@@ -261,6 +267,7 @@ export default function InheritPageClient({ id }: { id: string }) {
         )
     : undefined;
 
+  const claimedBy = getClaimedBy(will);
   const grace = graceDeadline(will);
   const canClaim = claimIsAvailable(will.status, grace, now);
   const secondsUntilClaim = grace ? Math.max(0, Math.ceil((grace.getTime() - now) / 1000)) : 0;
@@ -319,8 +326,25 @@ export default function InheritPageClient({ id }: { id: string }) {
       </div>
 
       {will.status === WillStatus.Released ? (
-        <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-center text-sm text-will-light/70">
-          This will has already been distributed to all beneficiaries in a single transaction.
+        <div className="space-y-3">
+          <button
+            type="button"
+            disabled
+            aria-disabled="true"
+            className="w-full cursor-not-allowed rounded-full bg-will-purple px-4 py-3 text-sm font-semibold text-white opacity-40"
+          >
+            Already claimed
+          </button>
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-center text-sm text-will-light/70">
+            This will has already been distributed to all beneficiaries in a single transaction.
+            {claimedBy ? (
+              <span className="mt-2 block text-xs">
+                Claimed by <CopyAddress address={claimedBy} className="text-will-light/80" />
+              </span>
+            ) : claimTxHash && publicKey ? (
+              <span className="mt-2 block text-xs">Claimed by you ({truncateAddress(publicKey)})</span>
+            ) : null}
+          </div>
         </div>
       ) : canClaim ? (
         <button

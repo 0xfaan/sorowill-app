@@ -5,7 +5,7 @@ import Link from 'next/link';
 
 import { calculateShares, formatUSDC, getTimeUntilCheckin, WillStatus, type Will } from '@sorowill/sdk';
 
-import { formatCheckinLabel } from '@/lib/deadlines';
+import { formatCheckinLabel, formatRelativeTime, parseCreatedAt, type WillWithCreatedAt } from '@/lib/deadlines';
 import { getSafeBalance } from '@/lib/tokenDecimals';
 import { StatusBanner } from './StatusBanner';
 
@@ -128,6 +128,14 @@ function WillCardComponent({
               </span>
             </>
           ) : null}
+          {createdAt ? (
+            <>
+              <span className="text-will-light/40">•</span>
+              <time dateTime={createdAt.toISOString()} title={createdAt.toLocaleString()}>
+                Created {formatRelativeTime(createdAt)}
+              </time>
+            </>
+          ) : null}
         </div>
 
         {will.beneficiaries?.length ? (
@@ -213,6 +221,7 @@ export function willCardPropsAreEqual(prev: WillCardProps, next: WillCardProps):
       a.checkinPeriodDays === b.checkinPeriodDays &&
       a.lastCheckin?.getTime() === b.lastCheckin?.getTime() &&
       a.triggerTime?.getTime() === b.triggerTime?.getTime() &&
+      parseCreatedAt(a.createdAt)?.getTime() === parseCreatedAt(b.createdAt)?.getTime() &&
       sameBeneficiaries(a.beneficiaries, b.beneficiaries));
 
   return (

@@ -132,3 +132,45 @@ export function formatCheckinLabel(secondsLeft: number): string {
   const daysLeft = Math.floor(secondsLeft / 86_400);
   return `Check-in due in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`;
 }
+
+/**
+ * A Will as returned by the SDK, optionally carrying its creation timestamp
+ * (a Date, ISO string, or epoch seconds/milliseconds).
+ */
+export type WillWithCreatedAt = Will & { createdAt?: Date | string | number | null };
+
+export function parseCreatedAt(value: unknown): Date | null {
+  let date: Date;
+  if (value instanceof Date) {
+    date = value;
+  } else if (typeof value === 'string') {
+    date = new Date(value);
+  } else if (typeof value === 'number') {
+    date = new Date(value < 1_000_000_000_000 ? value * 1000 : value);
+  } else {
+    return null;
+  }
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+const RELATIVE_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+  ['year', 365 * 86_400],
+  ['month', 30 * 86_400],
+  ['week', 7 * 86_400],
+  ['day', 86_400],
+  ['hour', 3_600],
+  ['minute', 60],
+];
+
+/** Formats a past date as relative time, e.g. "2 months ago". */
+export function formatRelativeTime(date: Date, now: number = Date.now()): string {
+  const diffSeconds = Math.round((date.getTime() - now) / 1000);
+  const abs = Math.abs(diffSeconds);
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+  for (const [unit, size] of RELATIVE_UNITS) {
+    if (abs >= size) {
+      return rtf.format(Math.trunc(diffSeconds / size), unit);
+    }
+  }
+  return rtf.format(0, 'second');
+}
