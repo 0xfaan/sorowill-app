@@ -45,6 +45,13 @@ function getAddressErrors(beneficiaries: Beneficiary[]): Record<number, string> 
   return errors;
 }
 
+/** Returns true when a raw numeric string has more than two decimal places. */
+export function hasExcessPrecision(raw: string): boolean {
+  const match = /^\s*[+-]?\d*\.(\d+)\s*$/.exec(raw);
+  if (!match) return false;
+  return match[1].replace(/0+$/, '').length > 2;
+}
+
 function equalSplit(count: number): number[] {
   if (count === 0) {
     return [];
@@ -152,6 +159,9 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
 
   const [resolvedAddresses, setResolvedAddresses] = useState<Map<string, string>>(new Map());
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  // Raw text entered per row (keyed by row id) so a >2 decimal entry can be
+  // flagged even though the stored value is rounded to 2 decimals (#753).
+  const [precisionWarnings, setPrecisionWarnings] = useState<Map<string, string>>(new Map());
   const [resolutionError, setResolutionError] = useState<Map<string, string>>(new Map());
 
   function updateRow(index: number, patch: Partial<Beneficiary>) {
@@ -321,6 +331,12 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
                     value={beneficiary.percentage}
                     onChange={(event) => {
                       const raw = event.target.value;
+                      setPrecisionWarnings((prev) => {
+                        const next = new Map(prev);
+                        if (beneficiaryId && hasExcessPrecision(raw)) next.set(beneficiaryId, raw.trim());
+                        else next.delete(beneficiaryId);
+                        return next;
+                      });
                       if (raw === '') {
                         updateRow(index, { percentage: 0 });
                         return;
@@ -346,24 +362,11 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
                 ✕
               </button>
             </div>
-            {isFederatedAddress(beneficiary.address) && (
-              <div className="ml-1 flex items-center gap-2">
-                <span
-                  data-testid={`beneficiary-federated-badge-${index}`}
-                  className="rounded-full border border-will-purple/40 bg-will-purple/10 px-2 py-0.5 text-xs text-will-purple"
-                >
-                  Federated
-                </span>
-                {resolvingId === beneficiaryId ? (
-                  <span role="status" className="text-xs text-will-light/60">
-                    Resolving…
-                  </span>
-                ) : resolvedAddresses.has(beneficiaryId) ? (
-                  <span className="text-xs text-emerald-400">✓ Resolved</span>
-                ) : (
-                  <span className="text-xs text-amber-400">Unresolved</span>
-                )}
-              </div>
+            {precisionWarnings.has(beneficiaryId) && (
+              <p role="status" className="ml-1 text-xs text-amber-400">
+                {precisionWarnings.get(beneficiaryId)}% has more than 2 decimal places and was rounded to{' '}
+                {beneficiary.percentage}%. Adjust the value, or continue with the rounded percentage.
+              </p>
             )}
             {resolvedAddresses.has(beneficiaryId) && (
               <div className="ml-1 rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-2">
