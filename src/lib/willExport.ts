@@ -52,6 +52,13 @@ function formatExportBalance(balance: Will['balance'] | null | undefined, token:
   return formatTokenBalance(raw, token);
 }
 
+/** ISO-8601 timestamp of the last check-in, or empty when missing/invalid. */
+function formatLastCheckin(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '';
+  const date = value instanceof Date ? value : new Date(value as string | number);
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+}
+
 export function exportWillsToCSV(wills: Will[]): string {
   validateBeneficiariesForExport(wills);
 
@@ -63,6 +70,7 @@ export function exportWillsToCSV(wills: Will[]): string {
     'Token',
     'Check-in Period (days)',
     'Grace Period (days)',
+    'Last Check-in',
     'Beneficiaries',
     'Guardians',
   ];
@@ -86,6 +94,7 @@ export function exportWillsToCSV(wills: Will[]): string {
       escapeCSVField(will.token),
       escapeCSVField(will.checkinPeriodDays),
       escapeCSVField(will.gracePeriodDays),
+      escapeCSVField(formatLastCheckin(will.lastCheckin)),
       escapeCSVField(beneficiariesStr),
       escapeCSVField(guardiansStr),
     ].join(',');
