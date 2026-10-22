@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 
 import { WillStatus, type Will, formatUSDC, toStroops } from '@sorowill/sdk';
 
-import { safeGetPublicKey } from '@/lib/freighter';
+import { normalizeWalletNetwork, safeGetPublicKey, safeGetWalletNetwork } from '@/lib/freighter';
 import { getSoroWillClient, getWillsByGuardian } from '@/lib/sorowill';
 import { getInvalidBatchAmounts, isValidAmount } from '@/lib/amount';
 import { formatError, formatLoadError, classifyCheckInError } from '@/lib/errors';
@@ -92,6 +92,7 @@ function DashboardPageOld() {
   const [guardianScanWarning, setGuardianScanWarning] = useState(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [networkChangedTo, setNetworkChangedTo] = useState<string | null>(null);
 
   // Batch top-up state
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
@@ -229,6 +230,39 @@ function DashboardPageOld() {
     if (publicKey) {
       void loadWills(publicKey);
     }
+  }, [publicKey, loadWills]);
+
+  // Freighter has no network-change event, so poll the wallet network (and
+  // re-check on focus). Will IDs are network-scoped, so when it changes we
+  // drop selections tied to the old network, refetch, and show a banner.
+  useEffect(() => {
+    if (!publicKey) return;
+    let cancelled = false;
+    let lastNetwork: string | null = null;
+
+    const checkNetwork = async () => {
+      const wallet = await safeGetWalletNetwork();
+      if (cancelled || !wallet) return;
+      const current = normalizeWalletNetwork(wallet.network) ?? wallet.network;
+      if (lastNetwork !== null && lastNetwork !== current) {
+        setNetworkChangedTo(current);
+        setSelectedWillIds([]);
+        setBatchAmounts({});
+        setBatchResults({});
+        void loadWills(publicKey);
+      }
+      lastNetwork = current;
+    };
+
+    void checkNetwork();
+    const timer = window.setInterval(() => void checkNetwork(), 4000);
+    const onFocus = () => void checkNetwork();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+    };
   }, [publicKey, loadWills]);
 
   // Stable identity so memoized WillCards don't re-render on every dashboard render.
@@ -391,6 +425,25 @@ function DashboardPageOld() {
             className="text-xs font-semibold bg-emerald-500 text-white rounded-full px-3 py-1 hover:bg-emerald-500/80 transition"
           >
             View Role
+          </button>
+        </div>
+      )}
+
+      {networkChangedTo && (
+        <div
+          role="status"
+          className="flex items-center justify-between rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-amber-300 text-sm"
+        >
+          <span>
+            Wallet network changed to <strong>{networkChangedTo}</strong>. Will IDs are network-specific, so your
+            wills were reloaded.
+          </span>
+          <button
+            type="button"
+            onClick={() => setNetworkChangedTo(null)}
+            className="text-xs font-semibold underline"
+          >
+            Dismiss
           </button>
         </div>
       )}
