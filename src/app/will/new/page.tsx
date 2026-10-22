@@ -294,7 +294,7 @@ export default function NewWillPage() {
     // The user must click "Resolve" before the address is replaced with the real G... key.
     beneficiaries.every((b) => !isFederatedAddress(b.address));
 
-  const { rowErrors: guardianRowErrors, topError: guardianTopError } = validateGuardians(guardians, ownerAddress);
+  const { rowErrors: guardianRowErrors, topError: guardianTopError } = validateGuardians(guardians, ownerAddress, formNetworkRef.current);
   // Step 3 is valid when there are no row-level errors (blank rows are a
   // warning, not a blocking error — the user sees the warning and can proceed).
   const guardiansValid = guardianTopError === null;

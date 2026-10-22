@@ -103,6 +103,9 @@ function DashboardPageOld() {
   const [guardianScanWarning, setGuardianScanWarning] = useState(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshDurationMs, setRefreshDurationMs] = useState<number | null>(null);
+  const [isStale, setIsStale] = useState(false);
+  const channelRef = useRef<BroadcastChannel | null>(null);
 
   // Batch top-up state
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
@@ -164,6 +167,7 @@ function DashboardPageOld() {
       setGuardianWills(guardian.wills);
       setGuardianScanWarning(guardian.hasErrors);
       setLastFetchTime(new Date());
+      setIsStale(false);
     } catch (err) {
       if (signal.aborted) {
         return;
@@ -188,7 +192,9 @@ function DashboardPageOld() {
 
   const handleManualRefresh = useCallback(async () => {
     if (!publicKey) return;
+    const startedAt = Date.now();
     setIsRefreshing(true);
+    setRefreshDurationMs(null);
     try {
       let client;
       try {
@@ -208,7 +214,9 @@ function DashboardPageOld() {
       setGuardianWills(guardian.wills);
       setGuardianScanWarning(guardian.hasErrors);
       setLastFetchTime(new Date());
+      setIsStale(false);
       setError(null);
+      channelRef.current?.postMessage({ type: 'wills-changed' });
       toast.success('Data refreshed');
     } catch (err) {
       console.error('[Dashboard] Failed to refresh wills:', err);
@@ -216,6 +224,7 @@ function DashboardPageOld() {
       setError(message);
       toast.error(message);
     } finally {
+      setRefreshDurationMs(Date.now() - startedAt);
       setIsRefreshing(false);
     }
   }, [publicKey, toast]);
@@ -257,6 +266,7 @@ function DashboardPageOld() {
       if (publicKey) {
         await loadWills(publicKey);
       }
+      channelRef.current?.postMessage({ type: 'wills-changed' });
       toast.success('Check-in successful');
     } catch (err) {
       const { kind, message } = classifyCheckInError(err);
@@ -458,10 +468,17 @@ function DashboardPageOld() {
           <button
             type="button"
             onClick={handleManualRefresh}
-            disabled={isRefreshing}
-            className="rounded-full border border-white/20 px-4 py-2 text-sm text-will-light/80 transition hover:border-white/40 hover:text-will-light disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={isRefreshing || loading}
+            aria-busy={isRefreshing}
+            className="inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm text-will-light/80 transition hover:border-white/40 hover:text-will-light disabled:cursor-not-allowed disabled:opacity-60"
             title="Refresh data"
           >
+            {isRefreshing && (
+              <span
+                className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent"
+                aria-hidden="true"
+              />
+            )}
             {isRefreshing ? 'Refreshing…' : '↻ Refresh'}
           </button>
           <Link
@@ -475,6 +492,14 @@ function DashboardPageOld() {
 
       <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-will-light/60">
         <span>Last updated {formatTimeAgo(lastFetchTime)}</span>
+        {!isRefreshing && refreshDurationMs !== null && refreshDurationMs > 2000 && (
+          <span className="ml-2">Refreshed in {(refreshDurationMs / 1000).toFixed(1)}s</span>
+        )}
+        {isStale && (
+          <span className="ml-2 text-amber-300" role="status">
+            Syncing latest changes…
+          </span>
+        )}
       </div>
 
       {/* Tabs */}
