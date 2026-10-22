@@ -79,6 +79,14 @@ function isUnsafeCheckinPeriod(days: number): boolean {
   return days > SAFE_CHECKIN_WINDOW_DAYS;
 }
 
+/** Returns an error message when the grace period is longer than the check-in period. */
+export function getGracePeriodRelationError(checkinDays: number, graceDays: number): string | null {
+  if (graceDays > checkinDays) {
+    return `Grace period (${graceDays} days) must not be longer than the check-in period (${checkinDays} days). Shorten the grace period or lengthen the check-in period.`;
+  }
+  return null;
+}
+
 export function getSubmittedGuardians(
   guardians: string[],
   resolvedGuardians: Map<string, string>,
@@ -292,7 +300,9 @@ export default function NewWillPage() {
   const guardiansValid = guardianTopError === null;
 
   const checkinPeriodUnsafe = isUnsafeCheckinPeriod(checkinPeriodDays);
-  const timingValid = checkinPeriodError === null && gracePeriodError === null && !checkinPeriodUnsafe;
+  const graceRelationError = getGracePeriodRelationError(checkinPeriodDays, gracePeriodDays);
+  const timingValid =
+    checkinPeriodError === null && gracePeriodError === null && !checkinPeriodUnsafe && graceRelationError === null;
 
   const canGoNext = [isAmountValid, beneficiariesValid, timingValid, guardiansValid, true][step];
 
@@ -444,6 +454,13 @@ export default function NewWillPage() {
     }
     if (!Number.isInteger(checkinPeriodDays) || checkinPeriodDays <= 0 || !Number.isInteger(gracePeriodDays) || gracePeriodDays <= 0) {
       setError('Check-in and grace periods must be positive whole numbers.');
+      setSubmitting(false);
+      return;
+    }
+
+    const relationError = getGracePeriodRelationError(checkinPeriodDays, gracePeriodDays);
+    if (relationError) {
+      setError(relationError);
       setSubmitting(false);
       return;
     }
@@ -819,6 +836,11 @@ export default function NewWillPage() {
                   </p>
                 ) : null}
               </div>
+              {graceRelationError ? (
+                <p id="grace-relation-error" role="alert" className="mt-2 text-xs text-red-400">
+                  {graceRelationError}
+                </p>
+              ) : null}
             </div>
           </fieldset>
         ) : null}
