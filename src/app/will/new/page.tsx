@@ -29,6 +29,7 @@ import {
   saveDraft,
   type FormStateDraft,
 } from '@/lib/draftValidation';
+import { shouldWarnOnClone } from '@/lib/cloneWarning';
 import { useToast } from '@/components/Toast';
 
 const CHECKIN_OPTIONS = [30, 60, 90, 180, 365];
@@ -110,6 +111,8 @@ export default function NewWillPage() {
   const [guardians, setGuardians] = useState<string[]>([]);
   const [cloneLoading, setCloneLoading] = useState(false);
   const [cloneError, setCloneError] = useState<CloneErrorKind | null>(null);
+  // Set when the source will is released/cancelled so we can warn before reuse (#736).
+  const [cloneWarning, setCloneWarning] = useState<string | null>(null);
   const [resumeAvailable, setResumeAvailable] = useState(false);
   // Validated draft captured on mount, before the autosave effect below
   // overwrites localStorage with the fresh form's defaults.
@@ -230,6 +233,11 @@ export default function NewWillPage() {
           setCheckinPeriodDays(sourceWill.checkinPeriodDays);
           setGracePeriodDays(sourceWill.gracePeriodDays);
           setGuardians(sourceWill.guardians);
+          setCloneWarning(
+            shouldWarnOnClone(sourceWill.status)
+              ? `The will you are copying from has been ${String(sourceWill.status).toLowerCase()}.`
+              : null,
+          );
           setCloneLoading(false);
         })
         .catch((err) => {
@@ -587,6 +595,11 @@ export default function NewWillPage() {
                       setCheckinPeriodDays(sourceWill.checkinPeriodDays);
                       setGracePeriodDays(sourceWill.gracePeriodDays);
                       setGuardians(sourceWill.guardians);
+                      setCloneWarning(
+                        shouldWarnOnClone(sourceWill.status)
+                          ? `The will you are copying from has been ${String(sourceWill.status).toLowerCase()}.`
+                          : null,
+                      );
                       setCloneLoading(false);
                     })
                     .catch((err) => {
@@ -606,6 +619,39 @@ export default function NewWillPage() {
               className="rounded-full border border-red-400/40 px-4 py-2 text-sm text-red-300 transition hover:border-red-400/70"
             >
               Go back
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!cloneLoading && !cloneError && cloneWarning && (
+        <div
+          role="alert"
+          className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-4 text-sm text-amber-300"
+        >
+          <p>{cloneWarning} Copying its settings may not be what you intended.</p>
+          <div className="mt-3 flex gap-3">
+            <button
+              type="button"
+              onClick={() => setCloneWarning(null)}
+              className="rounded-full bg-will-purple px-4 py-2 text-sm font-medium text-white transition hover:bg-will-purple/90"
+            >
+              Continue with copy
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCloneWarning(null);
+                setToken('');
+                setBeneficiaries([{ address: '', percentage: 100 }]);
+                setCheckinPeriodDays(90);
+                setGracePeriodDays(7);
+                setGuardians([]);
+                router.replace('/will/new');
+              }}
+              className="rounded-full border border-amber-400/40 px-4 py-2 text-sm text-amber-300 transition hover:border-amber-400/70"
+            >
+              Start fresh
             </button>
           </div>
         </div>
