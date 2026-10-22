@@ -820,6 +820,29 @@ export default function NewWillPage() {
                 ) : null}
               </div>
             </div>
+            <div className="rounded-lg border border-white/10 bg-white/5 p-4 text-sm text-will-light/80" data-testid="timing-timeline">
+              <p className="font-medium text-will-light">What happens if you miss a check-in</p>
+              <ol className="mt-2 list-decimal space-y-1 pl-5">
+                <li>You must check in at least once every {checkinPeriodDays} days.</li>
+                <li>
+                  If a check-in deadline passes, anyone can start the {gracePeriodDays}-day grace period.
+                </li>
+                <li>
+                  If you check in during the grace period, the will stays active. If you do not, your funds are
+                  released to your beneficiaries.
+                </li>
+              </ol>
+              <p className="mt-3 text-xs text-will-light/70">
+                Example: you check in today. If you then stay inactive, your check-in is due in {checkinPeriodDays}{' '}
+                days, and your funds are released {checkinPeriodDays + gracePeriodDays} days from today (
+                {checkinPeriodDays} + {gracePeriodDays}) unless you check in before then.
+              </p>
+              <p className="mt-2 text-xs">
+                <a href="/faq" target="_blank" rel="noopener noreferrer" className="text-will-purple hover:underline">
+                  Learn more about check-in and grace periods
+                </a>
+              </p>
+            </div>
           </fieldset>
         ) : null}
 
