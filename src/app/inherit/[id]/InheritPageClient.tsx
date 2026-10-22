@@ -8,6 +8,9 @@ import { safeGetPublicKey, truncateAddress } from '@/lib/freighter';
 import { getSoroWillClient, stellarExpertUrl } from '@/lib/sorowill';
 import { formatError, formatLoadError, isWillNotFoundError } from '@/lib/errors';
 import { graceDeadline } from '@/lib/deadlines';
+import { serverNow, syncServerClock } from '@/lib/serverClock';
+import { accountExists } from '@/lib/balance';
+import { isValidStellarAddress } from '@/lib/guardianValidation';
 import { useToast } from '@/components/Toast';
 import { StatusBanner } from '@/components/StatusBanner';
 import { CopyAddress } from '@/components/CopyAddress';
@@ -18,6 +21,12 @@ function isValidWillId(id: string): boolean {
 
 export function claimIsAvailable(status: WillStatus, grace: Date | null, now: number): boolean {
   return status === WillStatus.Triggered && grace !== null && now >= grace.getTime();
+}
+
+/** Address that released the will, when the SDK/contract exposes it. */
+export function getClaimedBy(will: Will): string | null {
+  const w = will as Will & { releasedBy?: string | null; claimedBy?: string | null };
+  return w.releasedBy ?? w.claimedBy ?? null;
 }
 
 /**
@@ -40,7 +49,7 @@ export default function InheritPageClient({ id }: { id: string }) {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [claiming, setClaiming] = useState(false);
   const [claimTxHash, setClaimTxHash] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => serverNow());
 
   const isMounted = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
@@ -174,9 +183,16 @@ export default function InheritPageClient({ id }: { id: string }) {
     if (!will || will.status !== WillStatus.Triggered) return;
     const deadline = graceDeadline(will);
     if (!deadline) return;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    setNow(serverNow());
+    void syncServerClock().then(() => {
+      if (!cancelled) setNow(serverNow());
+    });
+    const timer = window.setInterval(() => setNow(serverNow()), 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [will]);
 
   // Quick client-side validation before hitting the RPC layer
@@ -195,6 +211,14 @@ export default function InheritPageClient({ id }: { id: string }) {
     setClaiming(true);
     setError(null);
     try {
+      if (publicKey) {
+        if (!isValidStellarAddress(publicKey)) {
+          throw new Error('The connected address is not a valid Stellar account address.');
+        }
+        if ((await accountExists(publicKey)) === false) {
+          throw new Error('The connected address does not exist on the network. Fund the account and try again.');
+        }
+      }
       const { txHash } = await getSoroWillClient().releaseInheritance(willId);
       setClaimTxHash(txHash);
       await refetch();
@@ -261,6 +285,7 @@ export default function InheritPageClient({ id }: { id: string }) {
         )
     : undefined;
 
+  const claimedBy = getClaimedBy(will);
   const grace = graceDeadline(will);
   const canClaim = claimIsAvailable(will.status, grace, now);
   const secondsUntilClaim = grace ? Math.max(0, Math.ceil((grace.getTime() - now) / 1000)) : 0;
@@ -319,8 +344,25 @@ export default function InheritPageClient({ id }: { id: string }) {
       </div>
 
       {will.status === WillStatus.Released ? (
-        <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-center text-sm text-will-light/70">
-          This will has already been distributed to all beneficiaries in a single transaction.
+        <div className="space-y-3">
+          <button
+            type="button"
+            disabled
+            aria-disabled="true"
+            className="w-full cursor-not-allowed rounded-full bg-will-purple px-4 py-3 text-sm font-semibold text-white opacity-40"
+          >
+            Already claimed
+          </button>
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-center text-sm text-will-light/70">
+            This will has already been distributed to all beneficiaries in a single transaction.
+            {claimedBy ? (
+              <span className="mt-2 block text-xs">
+                Claimed by <CopyAddress address={claimedBy} className="text-will-light/80" />
+              </span>
+            ) : claimTxHash && publicKey ? (
+              <span className="mt-2 block text-xs">Claimed by you ({truncateAddress(publicKey)})</span>
+            ) : null}
+          </div>
         </div>
       ) : canClaim ? (
         <button

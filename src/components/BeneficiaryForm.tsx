@@ -18,6 +18,23 @@ function isValidStellarAddress(address: string): boolean {
 }
 
 /**
+ * Suggests a corrected address for a near-miss (stray quotes/whitespace or
+ * lowercase letters), or `null` when no simple fix produces a valid address.
+ */
+export function suggestAddressFix(address: string): string | null {
+  const cleaned = address.replace(/[\s"'`]/g, '').toUpperCase();
+  return cleaned !== address && isValidStellarAddress(cleaned) ? cleaned : null;
+}
+
+/** Splits pasted text into candidate addresses (newline, comma, semicolon or space separated). */
+export function parsePastedAddresses(text: string): string[] {
+  return text
+    .split(/[\s,;]+/)
+    .map((t) => t.replace(/^["'`]+|["'`]+$/g, ''))
+    .filter(Boolean);
+}
+
+/**
  * The SDK's `Beneficiary.percentage` field is typed as `number`, but some
  * SDK versions/boundaries (e.g. values round-tripped through Soroban
  * contract calls) may hand back a `bigint` instead. Converting at this
@@ -39,10 +56,20 @@ function getAddressErrors(beneficiaries: Beneficiary[]): Record<number, string> 
       // address; the contract rejects the raw form, so block submission.
       errors[i] = 'Federated address must be resolved before submitting — click Resolve';
     } else if (b.address && !isFederatedAddress(b.address) && !isValidStellarAddress(b.address)) {
-      errors[i] = 'Invalid Stellar address';
+      const suggestion = suggestAddressFix(b.address);
+      errors[i] = suggestion
+        ? `Invalid Stellar address — did you mean ${suggestion}?`
+        : 'Invalid Stellar address';
     }
   });
   return errors;
+}
+
+/** Returns true when a raw numeric string has more than two decimal places. */
+export function hasExcessPrecision(raw: string): boolean {
+  const match = /^\s*[+-]?\d*\.(\d+)\s*$/.exec(raw);
+  if (!match) return false;
+  return match[1].replace(/0+$/, '').length > 2;
 }
 
 function equalSplit(count: number): number[] {
@@ -157,6 +184,9 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
 
   const [resolvedAddresses, setResolvedAddresses] = useState<Map<string, string>>(new Map());
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  // Raw text entered per row (keyed by row id) so a >2 decimal entry can be
+  // flagged even though the stored value is rounded to 2 decimals (#753).
+  const [precisionWarnings, setPrecisionWarnings] = useState<Map<string, string>>(new Map());
   const [resolutionError, setResolutionError] = useState<Map<string, string>>(new Map());
 
   function updateRow(index: number, patch: Partial<Beneficiary>) {
@@ -224,6 +254,17 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
     } finally {
       setResolvingId(null);
     }
+  }
+
+  // Pasting several addresses at once fills one row per address; each is then
+  // validated like a typed address, so invalid ones surface an error immediately.
+  function handleAddressPaste(index: number, event: React.ClipboardEvent<HTMLInputElement>) {
+    const tokens = parsePastedAddresses(event.clipboardData.getData('text'));
+    if (tokens.length < 2) return;
+    event.preventDefault();
+    const [first, ...rest] = tokens;
+    const updated = value.map((row, i) => (i === index ? { ...row, address: first } : row));
+    onChange([...updated, ...rest.map((address) => ({ address, percentage: 0 }))]);
   }
 
   function addRow() {
@@ -294,6 +335,7 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
                   placeholder="Stellar address (G...) or federated address (name*domain.com)"
                   value={beneficiary.address}
                   onChange={(event) => updateRow(index, { address: event.target.value })}
+                  onPaste={(event) => handleAddressPaste(index, event)}
                   aria-invalid={addressErrors[index] ? 'true' : undefined}
                   aria-describedby={addressErrors[index] ? `beneficiary-address-error-${index}` : undefined}
                   className={`w-full rounded-lg border ${
@@ -326,6 +368,12 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
                     value={beneficiary.percentage}
                     onChange={(event) => {
                       const raw = event.target.value;
+                      setPrecisionWarnings((prev) => {
+                        const next = new Map(prev);
+                        if (beneficiaryId && hasExcessPrecision(raw)) next.set(beneficiaryId, raw.trim());
+                        else next.delete(beneficiaryId);
+                        return next;
+                      });
                       if (raw === '') {
                         updateRow(index, { percentage: 0 });
                         return;
@@ -351,6 +399,12 @@ export function BeneficiaryForm({ value, onChange }: BeneficiaryFormProps) {
                 ✕
               </button>
             </div>
+            {precisionWarnings.has(beneficiaryId) && (
+              <p role="status" className="ml-1 text-xs text-amber-400">
+                {precisionWarnings.get(beneficiaryId)}% has more than 2 decimal places and was rounded to{' '}
+                {beneficiary.percentage}%. Adjust the value, or continue with the rounded percentage.
+              </p>
+            )}
             {resolvedAddresses.has(beneficiaryId) && (
               <div className="ml-1 rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-2">
                 <p className="text-xs text-emerald-400">Resolved address:</p>

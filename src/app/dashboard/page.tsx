@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -12,8 +12,10 @@ import { getInvalidBatchAmounts, isValidAmount } from '@/lib/amount';
 import { formatError, formatLoadError, classifyCheckInError } from '@/lib/errors';
 import { exportWillsToCSV } from '@/lib/willExport';
 import { getSafeBalance } from '@/lib/tokenDecimals';
+import { loadDashboardTab, saveDashboardTab } from '@/lib/dashboardTab';
 import { useToast } from '@/components/Toast';
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts';
+import { useRefreshOnVisible } from '@/lib/useRefreshOnVisible';
 import { WillCard } from '@/components/WillCard';
 
 // TODO(#5): Add an activity feed (check-ins, top-ups, guardian votes) once
@@ -81,6 +83,15 @@ function DashboardPageOld() {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [checkedWallet, setCheckedWallet] = useState(false);
   const [tab, setTab] = useState<Tab>('owned');
+
+  // Restore the last selected tab after mount (avoids an SSR hydration mismatch).
+  useEffect(() => {
+    setTab(loadDashboardTab());
+  }, []);
+
+  useEffect(() => {
+    saveDashboardTab(tab);
+  }, [tab]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [ownedWills, setOwnedWills] = useState<Will[]>([]);
@@ -92,7 +103,9 @@ function DashboardPageOld() {
   const [guardianScanWarning, setGuardianScanWarning] = useState(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [networkChangedTo, setNetworkChangedTo] = useState<string | null>(null);
+  const [refreshDurationMs, setRefreshDurationMs] = useState<number | null>(null);
+  const [isStale, setIsStale] = useState(false);
+  const channelRef = useRef<BroadcastChannel | null>(null);
 
   // Batch top-up state
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
@@ -154,6 +167,7 @@ function DashboardPageOld() {
       setGuardianWills(guardian.wills);
       setGuardianScanWarning(guardian.hasErrors);
       setLastFetchTime(new Date());
+      setIsStale(false);
     } catch (err) {
       if (signal.aborted) {
         return;
@@ -178,7 +192,9 @@ function DashboardPageOld() {
 
   const handleManualRefresh = useCallback(async () => {
     if (!publicKey) return;
+    const startedAt = Date.now();
     setIsRefreshing(true);
+    setRefreshDurationMs(null);
     try {
       let client;
       try {
@@ -198,7 +214,9 @@ function DashboardPageOld() {
       setGuardianWills(guardian.wills);
       setGuardianScanWarning(guardian.hasErrors);
       setLastFetchTime(new Date());
+      setIsStale(false);
       setError(null);
+      channelRef.current?.postMessage({ type: 'wills-changed' });
       toast.success('Data refreshed');
     } catch (err) {
       console.error('[Dashboard] Failed to refresh wills:', err);
@@ -206,6 +224,7 @@ function DashboardPageOld() {
       setError(message);
       toast.error(message);
     } finally {
+      setRefreshDurationMs(Date.now() - startedAt);
       setIsRefreshing(false);
     }
   }, [publicKey, toast]);
@@ -232,47 +251,30 @@ function DashboardPageOld() {
     }
   }, [publicKey, loadWills]);
 
-  // Freighter has no network-change event, so poll the wallet network (and
-  // re-check on focus). Will IDs are network-scoped, so when it changes we
-  // drop selections tied to the old network, refetch, and show a banner.
-  useEffect(() => {
-    if (!publicKey) return;
-    let cancelled = false;
-    let lastNetwork: string | null = null;
-
-    const checkNetwork = async () => {
-      const wallet = await safeGetWalletNetwork();
-      if (cancelled || !wallet) return;
-      const current = normalizeWalletNetwork(wallet.network) ?? wallet.network;
-      if (lastNetwork !== null && lastNetwork !== current) {
-        setNetworkChangedTo(current);
-        setSelectedWillIds([]);
-        setBatchAmounts({});
-        setBatchResults({});
-        void loadWills(publicKey);
-      }
-      lastNetwork = current;
-    };
-
-    void checkNetwork();
-    const timer = window.setInterval(() => void checkNetwork(), 4000);
-    const onFocus = () => void checkNetwork();
-    window.addEventListener('focus', onFocus);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-      window.removeEventListener('focus', onFocus);
-    };
+  // Re-fetch when returning to the tab or via back/forward navigation so
+  // cached component state never shows stale wills.
+  const refreshOnVisible = useCallback(() => {
+    if (publicKey) void loadWills(publicKey);
   }, [publicKey, loadWills]);
+  useRefreshOnVisible(refreshOnVisible, Boolean(publicKey));
 
   // Stable identity so memoized WillCards don't re-render on every dashboard render.
   const handleCheckIn = useCallback(async (willId: string) => {
     setCheckingInId(willId);
     try {
       await getSoroWillClient().checkIn(willId);
+      // Optimistic update so the card doesn't show the old check-in time while
+      // the server refetch below is in flight; the refetch then overwrites it
+      // with the authoritative on-chain value.
+      const now = new Date();
+      setOwnedWills((prev) =>
+        prev.map((w) => (w.id === willId ? { ...w, lastCheckin: now } : w)),
+      );
+      setLastFetchTime(now);
       if (publicKey) {
         await loadWills(publicKey);
       }
+      channelRef.current?.postMessage({ type: 'wills-changed' });
       toast.success('Check-in successful');
     } catch (err) {
       const { kind, message } = classifyCheckInError(err);
@@ -353,7 +355,11 @@ function DashboardPageOld() {
   const baseList =
     tab === 'owned' ? ownedWills : tab === 'inheriting' ? inheritingWills : guardianWills;
 
-  const activeList = filterWills(baseList, search, statusFilter);
+  // Only recompute when the list or filters change, not on unrelated state updates.
+  const activeList = useMemo(
+    () => filterWills(baseList, search, statusFilter),
+    [baseList, search, statusFilter],
+  );
 
   const handleExportCSV = useCallback(() => {
     let csv: string;
@@ -489,10 +495,17 @@ function DashboardPageOld() {
           <button
             type="button"
             onClick={handleManualRefresh}
-            disabled={isRefreshing}
-            className="rounded-full border border-white/20 px-4 py-2 text-sm text-will-light/80 transition hover:border-white/40 hover:text-will-light disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={isRefreshing || loading}
+            aria-busy={isRefreshing}
+            className="inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm text-will-light/80 transition hover:border-white/40 hover:text-will-light disabled:cursor-not-allowed disabled:opacity-60"
             title="Refresh data"
           >
+            {isRefreshing && (
+              <span
+                className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent"
+                aria-hidden="true"
+              />
+            )}
             {isRefreshing ? 'Refreshing…' : '↻ Refresh'}
           </button>
           <Link
@@ -506,6 +519,14 @@ function DashboardPageOld() {
 
       <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-will-light/60">
         <span>Last updated {formatTimeAgo(lastFetchTime)}</span>
+        {!isRefreshing && refreshDurationMs !== null && refreshDurationMs > 2000 && (
+          <span className="ml-2">Refreshed in {(refreshDurationMs / 1000).toFixed(1)}s</span>
+        )}
+        {isStale && (
+          <span className="ml-2 text-amber-300" role="status">
+            Syncing latest changes…
+          </span>
+        )}
       </div>
 
       {/* Tabs */}
@@ -772,6 +793,7 @@ function DashboardPageOld() {
                     checkingIn={checkingInId === will.id}
                     connectedAddress={publicKey}
                     showEntitledShare={tab === 'inheriting'}
+                    searchQuery={search}
                   />
                 </div>
               </div>

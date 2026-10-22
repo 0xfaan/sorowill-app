@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import InheritPageClient, { claimIsAvailable } from './InheritPageClient';
+import InheritPageClient, { claimIsAvailable, getClaimedBy } from './InheritPageClient';
 import { WillStatus, type Will } from '@sorowill/sdk';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
@@ -81,6 +81,13 @@ describe('claimIsAvailable', () => {
 
   it('returns false when grace is null', () => {
     expect(claimIsAvailable(WillStatus.Triggered, null, Date.now())).toBe(false);
+  });
+});
+
+describe('getClaimedBy', () => {
+  it('returns the releasing address when present, else null', () => {
+    expect(getClaimedBy(makeWill({ releasedBy: 'GCLAIMER' } as Partial<Will>))).toBe('GCLAIMER');
+    expect(getClaimedBy(makeWill())).toBeNull();
   });
 });
 
@@ -194,5 +201,16 @@ describe('InheritPageClient', () => {
     // Resolving after unmount must not throw (state updates are guarded).
     resolveGetWill(makeWill({ id: '7' }));
     await new Promise((r) => setTimeout(r, 20));
+  });
+
+  it('disables the claim form and shows who claimed an already released will', async () => {
+    mockGetWill.mockResolvedValue(
+      makeWill({ status: WillStatus.Released, releasedBy: 'GCLAIMER' } as Partial<Will>),
+    );
+
+    render(<InheritPageClient id="5" />);
+
+    const button = await screen.findByRole('button', { name: /already claimed/i });
+    expect(button).toBeDisabled();
   });
 });

@@ -42,6 +42,11 @@ function makeWill(overrides: Record<string, unknown> = {}): Will {
 }
 
 describe('WillCard', () => {
+  it('shows the creation time as relative time', () => {
+    render(<WillCard will={makeWill({ createdAt: new Date(Date.now() - 62 * 86_400_000) })} />);
+    expect(screen.getByText('Created 2 months ago')).toBeInTheDocument();
+  });
+
   it('renders will ID and balance', () => {
     render(<WillCard will={makeWill({ id: '42', balance: '500000000' })} />);
     expect(screen.getByText('Will #42')).toBeInTheDocument();
