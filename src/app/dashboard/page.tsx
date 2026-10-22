@@ -92,6 +92,8 @@ function DashboardPageOld() {
   const [guardianScanWarning, setGuardianScanWarning] = useState(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isStale, setIsStale] = useState(false);
+  const channelRef = useRef<BroadcastChannel | null>(null);
 
   // Batch top-up state
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
@@ -153,6 +155,7 @@ function DashboardPageOld() {
       setGuardianWills(guardian.wills);
       setGuardianScanWarning(guardian.hasErrors);
       setLastFetchTime(new Date());
+      setIsStale(false);
     } catch (err) {
       if (signal.aborted) {
         return;
@@ -197,7 +200,9 @@ function DashboardPageOld() {
       setGuardianWills(guardian.wills);
       setGuardianScanWarning(guardian.hasErrors);
       setLastFetchTime(new Date());
+      setIsStale(false);
       setError(null);
+      channelRef.current?.postMessage({ type: 'wills-changed' });
       toast.success('Data refreshed');
     } catch (err) {
       console.error('[Dashboard] Failed to refresh wills:', err);
@@ -231,6 +236,35 @@ function DashboardPageOld() {
     }
   }, [publicKey, loadWills]);
 
+  // Keep multiple tabs in sync: refetch when another tab reports a change
+  // and when this tab becomes visible again.
+  useEffect(() => {
+    if (!publicKey) return;
+    let channel: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== 'undefined') {
+      channel = new BroadcastChannel('sorowill-dashboard');
+      channelRef.current = channel;
+      channel.onmessage = (event) => {
+        if (event.data?.type === 'wills-changed') {
+          setIsStale(true);
+          void loadWills(publicKey);
+        }
+      };
+    }
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        setIsStale(true);
+        void loadWills(publicKey);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      channel?.close();
+      channelRef.current = null;
+    };
+  }, [publicKey, loadWills]);
+
   // Stable identity so memoized WillCards don't re-render on every dashboard render.
   const handleCheckIn = useCallback(async (willId: string) => {
     setCheckingInId(willId);
@@ -239,6 +273,7 @@ function DashboardPageOld() {
       if (publicKey) {
         await loadWills(publicKey);
       }
+      channelRef.current?.postMessage({ type: 'wills-changed' });
       toast.success('Check-in successful');
     } catch (err) {
       const { kind, message } = classifyCheckInError(err);
@@ -453,6 +488,11 @@ function DashboardPageOld() {
 
       <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-will-light/60">
         <span>Last updated {formatTimeAgo(lastFetchTime)}</span>
+        {isStale && (
+          <span className="ml-2 text-amber-300" role="status">
+            Syncing latest changes…
+          </span>
+        )}
       </div>
 
       {/* Tabs */}
