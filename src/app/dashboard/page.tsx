@@ -263,6 +263,14 @@ function DashboardPageOld() {
     setCheckingInId(willId);
     try {
       await getSoroWillClient().checkIn(willId);
+      // Optimistic update so the card doesn't show the old check-in time while
+      // the server refetch below is in flight; the refetch then overwrites it
+      // with the authoritative on-chain value.
+      const now = new Date();
+      setOwnedWills((prev) =>
+        prev.map((w) => (w.id === willId ? { ...w, lastCheckin: now } : w)),
+      );
+      setLastFetchTime(now);
       if (publicKey) {
         await loadWills(publicKey);
       }

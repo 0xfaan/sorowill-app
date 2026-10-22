@@ -29,10 +29,13 @@ import {
   saveDraft,
   type FormStateDraft,
 } from '@/lib/draftValidation';
+import { shouldWarnOnClone } from '@/lib/cloneWarning';
 import { useToast } from '@/components/Toast';
 
 const CHECKIN_OPTIONS = [30, 60, 90, 180, 365];
 const GRACE_OPTIONS = [3, 7, 14];
+// Max time to wait for federated guardian resolution on submit (#737).
+const GUARDIAN_RESOLVE_TIMEOUT_MS = 5000;
 
 // Soroban persistent storage has a TTL measured in ledgers; when it runs out,
 // the entry is archived and must be restored before the contract can read it.
@@ -118,6 +121,8 @@ export default function NewWillPage() {
   const [guardians, setGuardians] = useState<string[]>([]);
   const [cloneLoading, setCloneLoading] = useState(false);
   const [cloneError, setCloneError] = useState<CloneErrorKind | null>(null);
+  // Set when the source will is released/cancelled so we can warn before reuse (#736).
+  const [cloneWarning, setCloneWarning] = useState<string | null>(null);
   const [resumeAvailable, setResumeAvailable] = useState(false);
   // Validated draft captured on mount, before the autosave effect below
   // overwrites localStorage with the fresh form's defaults.
@@ -140,6 +145,7 @@ export default function NewWillPage() {
   const [ownerAddress, setOwnerAddress] = useState<string | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
+  const [resolvingOnSubmit, setResolvingOnSubmit] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checkinPeriodError, setCheckinPeriodError] = useState<string | null>(null);
   const [gracePeriodError, setGracePeriodError] = useState<string | null>(null);
@@ -238,6 +244,11 @@ export default function NewWillPage() {
           setCheckinPeriodDays(sourceWill.checkinPeriodDays);
           setGracePeriodDays(sourceWill.gracePeriodDays);
           setGuardians(sourceWill.guardians);
+          setCloneWarning(
+            shouldWarnOnClone(sourceWill.status)
+              ? `The will you are copying from has been ${String(sourceWill.status).toLowerCase()}.`
+              : null,
+          );
           setCloneLoading(false);
         })
         .catch((err) => {
@@ -443,6 +454,43 @@ export default function NewWillPage() {
     return null;
   }
 
+  /** Returns the final guardian list, or null (with `error` set) if resolution failed or timed out. */
+  async function resolveGuardiansForSubmit(): Promise<string[] | null> {
+    const pending = guardians
+      .map((guardian, index) => ({ guardian, id: stableGuardianIds.get(index) }))
+      .filter(({ guardian, id }) => isFederatedAddress(guardian) && !(id && resolvedGuardians.has(id)));
+    if (pending.length === 0) {
+      return getSubmittedGuardians(guardians, resolvedGuardians, stableGuardianIds);
+    }
+
+    setResolvingOnSubmit(true);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Resolving guardian addresses timed out after 5 seconds. Please try again.')),
+          GUARDIAN_RESOLVE_TIMEOUT_MS,
+        );
+      });
+      const results = await Promise.race([
+        Promise.all(pending.map(async ({ guardian, id }) => [id, await resolveFederatedAddress(guardian)] as const)),
+        timeout,
+      ]);
+      const merged = new Map(resolvedGuardians);
+      for (const [id, address] of results) {
+        if (id) merged.set(id, address);
+      }
+      setResolvedGuardians(merged);
+      return getSubmittedGuardians(guardians, merged, stableGuardianIds);
+    } catch (err) {
+      setError(formatError(err));
+      return null;
+    } finally {
+      clearTimeout(timer);
+      setResolvingOnSubmit(false);
+    }
+  }
+
   async function handleSubmit() {
     setSubmitting(true);
     setError(null);
@@ -499,6 +547,13 @@ export default function NewWillPage() {
         return;
       }
 
+      // Resolve any federated guardians that the user has not resolved yet,
+      // showing a loading state and failing after a 5s timeout.
+      const submittedGuardians = await resolveGuardiansForSubmit();
+      if (!submittedGuardians) {
+        return;
+      }
+
       const client = getSoroWillClient();
       const { willId } = await client.createWill({
         token,
@@ -506,7 +561,7 @@ export default function NewWillPage() {
         beneficiaries,
         checkinPeriodDays,
         gracePeriodDays,
-        guardians: getSubmittedGuardians(guardians, resolvedGuardians, stableGuardianIds),
+        guardians: submittedGuardians,
       });
       if (typeof window !== 'undefined') {
         clearDraft(localStorage);
@@ -604,6 +659,11 @@ export default function NewWillPage() {
                       setCheckinPeriodDays(sourceWill.checkinPeriodDays);
                       setGracePeriodDays(sourceWill.gracePeriodDays);
                       setGuardians(sourceWill.guardians);
+                      setCloneWarning(
+                        shouldWarnOnClone(sourceWill.status)
+                          ? `The will you are copying from has been ${String(sourceWill.status).toLowerCase()}.`
+                          : null,
+                      );
                       setCloneLoading(false);
                     })
                     .catch((err) => {
@@ -623,6 +683,39 @@ export default function NewWillPage() {
               className="rounded-full border border-red-400/40 px-4 py-2 text-sm text-red-300 transition hover:border-red-400/70"
             >
               Go back
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!cloneLoading && !cloneError && cloneWarning && (
+        <div
+          role="alert"
+          className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-4 text-sm text-amber-300"
+        >
+          <p>{cloneWarning} Copying its settings may not be what you intended.</p>
+          <div className="mt-3 flex gap-3">
+            <button
+              type="button"
+              onClick={() => setCloneWarning(null)}
+              className="rounded-full bg-will-purple px-4 py-2 text-sm font-medium text-white transition hover:bg-will-purple/90"
+            >
+              Continue with copy
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCloneWarning(null);
+                setToken('');
+                setBeneficiaries([{ address: '', percentage: 100 }]);
+                setCheckinPeriodDays(90);
+                setGracePeriodDays(7);
+                setGuardians([]);
+                router.replace('/will/new');
+              }}
+              className="rounded-full border border-amber-400/40 px-4 py-2 text-sm text-amber-300 transition hover:border-amber-400/70"
+            >
+              Start fresh
             </button>
           </div>
         </div>
@@ -1000,10 +1093,10 @@ export default function NewWillPage() {
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={submitting || guardianTopError !== null || !isAmountValid}
+            disabled={submitting || resolvingOnSubmit || guardianTopError !== null || !isAmountValid}
             className="w-full rounded-full bg-will-purple px-5 py-2 text-sm font-medium text-white transition hover:bg-will-purple/90 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
           >
-            {submitting ? 'Creating…' : 'Create Will'}
+            {resolvingOnSubmit ? 'Resolving addresses…' : submitting ? 'Creating…' : 'Create Will'}
           </button>
         )}
       </div>
