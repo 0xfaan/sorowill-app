@@ -4,6 +4,13 @@ import { isWillNotFoundMessage } from '@/lib/errors';
 /**
  * Time model for deadline math
  *
+ * UTC requirement: every deadline is an absolute instant in UTC epoch
+ * milliseconds, matching the contract's UTC ledger timestamps. Never derive a
+ * deadline from local-time getters/setters (`getDate()`, `setHours()`,
+ * `new Date(y, m, d)`, ...) — they depend on the viewer's timezone and would
+ * make the remaining time disagree with the contract. Local time may only be
+ * used for display. Use `formatDeadlineUtc` to show the deadline in UTC.
+ *
  * All deadlines are computed as `instant + days * MS_PER_DAY` on epoch
  * milliseconds, which mirrors the contract (`period_days * 86_400` added to a
  * ledger timestamp in seconds).
@@ -30,6 +37,11 @@ const MS_PER_DAY = 86_400 * 1000;
 
 function addDays(instant: Date, days: number): Date {
   return new Date(instant.getTime() + days * MS_PER_DAY);
+}
+
+/** Formats a deadline as an unambiguous UTC string, e.g. "2026-01-08 12:00 UTC". */
+export function formatDeadlineUtc(deadline: Date): string {
+  return `${deadline.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 }
 
 export function nextCheckinDeadline(will: Will): Date {
