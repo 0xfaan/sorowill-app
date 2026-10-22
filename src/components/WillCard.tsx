@@ -5,12 +5,12 @@ import Link from 'next/link';
 
 import { calculateShares, formatUSDC, getTimeUntilCheckin, WillStatus, type Will } from '@sorowill/sdk';
 
-import { formatCheckinLabel } from '@/lib/deadlines';
+import { formatCheckinLabel, formatRelativeTime, parseCreatedAt, type WillWithCreatedAt } from '@/lib/deadlines';
 import { getSafeBalance } from '@/lib/tokenDecimals';
 import { StatusBanner } from './StatusBanner';
 
 export interface WillCardProps {
-  will: Will;
+  will: WillWithCreatedAt;
   /** Shown only when the viewer owns this will and it is still active. */
   onCheckIn?: (willId: string) => void;
   checkingIn?: boolean;
@@ -27,6 +27,7 @@ function WillCardComponent({
   connectedAddress,
   showEntitledShare = false,
 }: WillCardProps) {
+  const createdAt = parseCreatedAt(will.createdAt);
   const secondsLeft = getTimeUntilCheckin(will);
   const overdue = secondsLeft <= 0;
 
@@ -78,6 +79,14 @@ function WillCardComponent({
               <span className="font-medium text-indigo-300">
                 Your share: {formatUSDC(BigInt(userShare.share))} USDC
               </span>
+            </>
+          ) : null}
+          {createdAt ? (
+            <>
+              <span className="text-will-light/40">•</span>
+              <time dateTime={createdAt.toISOString()} title={createdAt.toLocaleString()}>
+                Created {formatRelativeTime(createdAt)}
+              </time>
             </>
           ) : null}
         </div>
@@ -159,6 +168,7 @@ export function willCardPropsAreEqual(prev: WillCardProps, next: WillCardProps):
       a.checkinPeriodDays === b.checkinPeriodDays &&
       a.lastCheckin?.getTime() === b.lastCheckin?.getTime() &&
       a.triggerTime?.getTime() === b.triggerTime?.getTime() &&
+      parseCreatedAt(a.createdAt)?.getTime() === parseCreatedAt(b.createdAt)?.getTime() &&
       sameBeneficiaries(a.beneficiaries, b.beneficiaries));
 
   return (
