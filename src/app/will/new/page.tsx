@@ -79,6 +79,14 @@ function isUnsafeCheckinPeriod(days: number): boolean {
   return days > SAFE_CHECKIN_WINDOW_DAYS;
 }
 
+/** Returns an error message when the grace period is longer than the check-in period. */
+export function getGracePeriodRelationError(checkinDays: number, graceDays: number): string | null {
+  if (graceDays > checkinDays) {
+    return `Grace period (${graceDays} days) must not be longer than the check-in period (${checkinDays} days). Shorten the grace period or lengthen the check-in period.`;
+  }
+  return null;
+}
+
 export function getSubmittedGuardians(
   guardians: string[],
   resolvedGuardians: Map<string, string>,
@@ -292,7 +300,9 @@ export default function NewWillPage() {
   const guardiansValid = guardianTopError === null;
 
   const checkinPeriodUnsafe = isUnsafeCheckinPeriod(checkinPeriodDays);
-  const timingValid = checkinPeriodError === null && gracePeriodError === null && !checkinPeriodUnsafe;
+  const graceRelationError = getGracePeriodRelationError(checkinPeriodDays, gracePeriodDays);
+  const timingValid =
+    checkinPeriodError === null && gracePeriodError === null && !checkinPeriodUnsafe && graceRelationError === null;
 
   const canGoNext = [isAmountValid, beneficiariesValid, timingValid, guardiansValid, true][step];
 
@@ -444,6 +454,13 @@ export default function NewWillPage() {
     }
     if (!Number.isInteger(checkinPeriodDays) || checkinPeriodDays <= 0 || !Number.isInteger(gracePeriodDays) || gracePeriodDays <= 0) {
       setError('Check-in and grace periods must be positive whole numbers.');
+      setSubmitting(false);
+      return;
+    }
+
+    const relationError = getGracePeriodRelationError(checkinPeriodDays, gracePeriodDays);
+    if (relationError) {
+      setError(relationError);
       setSubmitting(false);
       return;
     }
@@ -629,6 +646,11 @@ export default function NewWillPage() {
                 aria-describedby="token-help token-error"
                 aria-invalid={showTokenError}
               />
+              {token.trim() === '' && step === 0 ? (
+                <p id="token-error" role="alert" className="mt-1 text-xs text-red-400">
+                  Token contract address is required.
+                </p>
+              ) : null}
               {showTokenError ? (
                 <p id="token-error" role="alert" className="mt-1 text-xs text-red-400">
                   That doesn&apos;t look like a Stellar contract address. It should start with
@@ -819,6 +841,34 @@ export default function NewWillPage() {
                   </p>
                 ) : null}
               </div>
+              {graceRelationError ? (
+                <p id="grace-relation-error" role="alert" className="mt-2 text-xs text-red-400">
+                  {graceRelationError}
+                </p>
+              ) : null}
+            </div>
+            <div className="rounded-lg border border-white/10 bg-white/5 p-4 text-sm text-will-light/80" data-testid="timing-timeline">
+              <p className="font-medium text-will-light">What happens if you miss a check-in</p>
+              <ol className="mt-2 list-decimal space-y-1 pl-5">
+                <li>You must check in at least once every {checkinPeriodDays} days.</li>
+                <li>
+                  If a check-in deadline passes, anyone can start the {gracePeriodDays}-day grace period.
+                </li>
+                <li>
+                  If you check in during the grace period, the will stays active. If you do not, your funds are
+                  released to your beneficiaries.
+                </li>
+              </ol>
+              <p className="mt-3 text-xs text-will-light/70">
+                Example: you check in today. If you then stay inactive, your check-in is due in {checkinPeriodDays}{' '}
+                days, and your funds are released {checkinPeriodDays + gracePeriodDays} days from today (
+                {checkinPeriodDays} + {gracePeriodDays}) unless you check in before then.
+              </p>
+              <p className="mt-2 text-xs">
+                <a href="/faq" target="_blank" rel="noopener noreferrer" className="text-will-purple hover:underline">
+                  Learn more about check-in and grace periods
+                </a>
+              </p>
             </div>
           </fieldset>
         ) : null}
@@ -917,6 +967,11 @@ export default function NewWillPage() {
 
       {error ? <p className="text-sm text-red-400">{error}</p> : null}
 
+      {!cloneError && step < STEP_LABELS.length - 1 && !canGoNext && (
+        <p id="step-invalid-hint" role="alert" className="text-xs text-red-400">
+          Fix the highlighted fields on this step to continue.
+        </p>
+      )}
       {!cloneError && (
       <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
         <button
@@ -930,8 +985,13 @@ export default function NewWillPage() {
         {step < STEP_LABELS.length - 1 ? (
           <button
             type="button"
-            onClick={() => setStep((s) => Math.min(STEP_LABELS.length - 1, s + 1))}
+            onClick={() => {
+              // Never advance past a step whose fields are invalid.
+              if (!canGoNext) return;
+              setStep((s) => Math.min(STEP_LABELS.length - 1, s + 1));
+            }}
             disabled={!canGoNext}
+            aria-describedby={!canGoNext ? 'step-invalid-hint' : undefined}
             className="w-full rounded-full bg-will-purple px-5 py-2 text-sm font-medium text-white transition hover:bg-will-purple/90 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
           >
             Next

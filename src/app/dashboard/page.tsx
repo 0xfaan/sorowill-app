@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -12,8 +12,10 @@ import { getInvalidBatchAmounts, isValidAmount } from '@/lib/amount';
 import { formatError, formatLoadError, classifyCheckInError } from '@/lib/errors';
 import { exportWillsToCSV } from '@/lib/willExport';
 import { getSafeBalance } from '@/lib/tokenDecimals';
+import { loadDashboardTab, saveDashboardTab } from '@/lib/dashboardTab';
 import { useToast } from '@/components/Toast';
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts';
+import { useRefreshOnVisible } from '@/lib/useRefreshOnVisible';
 import { WillCard } from '@/components/WillCard';
 
 // TODO(#5): Add an activity feed (check-ins, top-ups, guardian votes) once
@@ -81,6 +83,15 @@ function DashboardPageOld() {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [checkedWallet, setCheckedWallet] = useState(false);
   const [tab, setTab] = useState<Tab>('owned');
+
+  // Restore the last selected tab after mount (avoids an SSR hydration mismatch).
+  useEffect(() => {
+    setTab(loadDashboardTab());
+  }, []);
+
+  useEffect(() => {
+    saveDashboardTab(tab);
+  }, [tab]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [ownedWills, setOwnedWills] = useState<Will[]>([]);
@@ -240,34 +251,12 @@ function DashboardPageOld() {
     }
   }, [publicKey, loadWills]);
 
-  // Keep multiple tabs in sync: refetch when another tab reports a change
-  // and when this tab becomes visible again.
-  useEffect(() => {
-    if (!publicKey) return;
-    let channel: BroadcastChannel | null = null;
-    if (typeof BroadcastChannel !== 'undefined') {
-      channel = new BroadcastChannel('sorowill-dashboard');
-      channelRef.current = channel;
-      channel.onmessage = (event) => {
-        if (event.data?.type === 'wills-changed') {
-          setIsStale(true);
-          void loadWills(publicKey);
-        }
-      };
-    }
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        setIsStale(true);
-        void loadWills(publicKey);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibility);
-      channel?.close();
-      channelRef.current = null;
-    };
+  // Re-fetch when returning to the tab or via back/forward navigation so
+  // cached component state never shows stale wills.
+  const refreshOnVisible = useCallback(() => {
+    if (publicKey) void loadWills(publicKey);
   }, [publicKey, loadWills]);
+  useRefreshOnVisible(refreshOnVisible, Boolean(publicKey));
 
   // Stable identity so memoized WillCards don't re-render on every dashboard render.
   const handleCheckIn = useCallback(async (willId: string) => {
@@ -358,7 +347,11 @@ function DashboardPageOld() {
   const baseList =
     tab === 'owned' ? ownedWills : tab === 'inheriting' ? inheritingWills : guardianWills;
 
-  const activeList = filterWills(baseList, search, statusFilter);
+  // Only recompute when the list or filters change, not on unrelated state updates.
+  const activeList = useMemo(
+    () => filterWills(baseList, search, statusFilter),
+    [baseList, search, statusFilter],
+  );
 
   const handleExportCSV = useCallback(() => {
     let csv: string;
@@ -773,6 +766,7 @@ function DashboardPageOld() {
                     checkingIn={checkingInId === will.id}
                     connectedAddress={publicKey}
                     showEntitledShare={tab === 'inheriting'}
+                    searchQuery={search}
                   />
                 </div>
               </div>
