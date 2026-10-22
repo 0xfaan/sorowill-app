@@ -125,6 +125,10 @@ export function CountdownTimer({ deadline, label }: CountdownTimerProps) {
         {overdue ? `${t('overdue')} — ` : ''}
         {pad(days)}:{pad(hours)}:{pad(minutes)}:{pad(seconds)}
       </span>
+      <time dateTime={deadline.toISOString()} className="text-xs text-will-light/60">
+        Due {deadline.toLocaleString()}
+        {overdue ? '' : ` (${plural(Math.ceil(secondsLeft / 86_400), 'day')} left)`}
+      </time>
     </div>
   );
 }
