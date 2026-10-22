@@ -14,6 +14,7 @@ import { exportWillsToCSV } from '@/lib/willExport';
 import { getSafeBalance } from '@/lib/tokenDecimals';
 import { useToast } from '@/components/Toast';
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts';
+import { useRefreshOnVisible } from '@/lib/useRefreshOnVisible';
 import { WillCard } from '@/components/WillCard';
 
 // TODO(#5): Add an activity feed (check-ins, top-ups, guardian votes) once
@@ -230,6 +231,13 @@ function DashboardPageOld() {
       void loadWills(publicKey);
     }
   }, [publicKey, loadWills]);
+
+  // Re-fetch when returning to the tab or via back/forward navigation so
+  // cached component state never shows stale wills.
+  const refreshOnVisible = useCallback(() => {
+    if (publicKey) void loadWills(publicKey);
+  }, [publicKey, loadWills]);
+  useRefreshOnVisible(refreshOnVisible, Boolean(publicKey));
 
   // Stable identity so memoized WillCards don't re-render on every dashboard render.
   const handleCheckIn = useCallback(async (willId: string) => {
