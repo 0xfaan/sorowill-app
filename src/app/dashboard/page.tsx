@@ -719,6 +719,7 @@ function DashboardPageOld() {
                     checkingIn={checkingInId === will.id}
                     connectedAddress={publicKey}
                     showEntitledShare={tab === 'inheriting'}
+                    searchQuery={search}
                   />
                 </div>
               </div>
